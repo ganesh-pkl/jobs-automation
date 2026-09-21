@@ -1,0 +1,26 @@
+# Secrets and account data
+.env
+session_*.json
+profile.yaml
+learned_answers.json
+applications_log.csv
+debug_screenshots/
+
+# Resumes and other applicant documents
+*.pdf
+*.doc
+*.docx
+
+# Python and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+
+# Generated sharing packages
+dist/
