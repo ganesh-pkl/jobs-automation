@@ -81,7 +81,8 @@ class PortabilityTests(unittest.TestCase):
         for name in FILES:
             self.assertNotIn(name, {'.env', 'profile.yaml', 'session_naukri.json', 'applications_log.csv', 'learned_answers.json'})
             self.assertFalse(name.startswith(('.git/', '.venv/', 'debug_screenshots/')))
-            self.assertFalse(name.endswith(('.pdf', '.docx')))
+            if name != 'output/pdf/Naukri_Automation_Complete_Guide.pdf':
+                self.assertFalse(name.endswith(('.pdf', '.docx')))
 
 
 if __name__ == '__main__':

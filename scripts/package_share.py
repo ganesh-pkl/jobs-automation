@@ -12,6 +12,8 @@ FILES = (
     'docs/USER_GUIDE.md', 'docs/AI_PROMPTS.md', 'docs/VALIDATION.md',
     'scripts/package_share.py', 'tests/test_safety.py', 'tests/test_portability.py',
     '.github/workflows/tests.yml',
+    'scripts/build_pdf_guide.py',
+    'output/pdf/Naukri_Automation_Complete_Guide.pdf',
 )
 
 

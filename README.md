@@ -2,6 +2,8 @@
 
 Search Naukri jobs using your own profile and browser session, preview matching listings, and optionally submit applications within configured limits. Runs as a normal Python project; no particular AI editor is required.
 
+**Download:** [Complete PDF guide](output/pdf/Naukri_Automation_Complete_Guide.pdf) - setup, usage, troubleshooting, and all 10 AI prompts.
+
 **Start here:** [complete user guide](docs/USER_GUIDE.md) · [copy-and-paste AI prompts](docs/AI_PROMPTS.md) · [test results and limitations](docs/VALIDATION.md).
 
 ## Requirements
@@ -109,3 +111,5 @@ MIT. Original attribution is preserved in [LICENSE](LICENSE). No warranty.
 ## Attribution
 
 Based on [Hemanth-kumar-N-arya/naukri-job-apply-ai](https://github.com/Hemanth-kumar-N-arya/naukri-job-apply-ai), with portability, setup validation, preview, tests, and sharing documentation added in this edition.
+
+To rebuild the PDF after editing the Markdown guides, install the optional `reportlab` package in a separate environment and run `python scripts/build_pdf_guide.py`. It is not needed to run the automation.
