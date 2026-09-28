@@ -13,6 +13,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 from common.profile import Profile
+from common import stats_tracker
 
 SESSION_FILE = "session_uplers.json"
 LOG_FILE = "applications_log.csv"
@@ -26,6 +27,26 @@ def log_row(row: list):
         if new_file:
             w.writerow(["timestamp", "platform", "job_title", "company", "status", "notes"])
         w.writerow([str(x) for x in row])
+
+def _job_key(title: str | None, company: str | None) -> tuple[str, str]:
+    return (
+        " ".join((title or "").lower().split()),
+        " ".join((company or "").lower().split()),
+    )
+
+def load_applied_job_keys(path: str = LOG_FILE) -> set[tuple[str, str]]:
+    log_path = Path(path)
+    if not log_path.exists():
+        return set()
+    try:
+        with log_path.open(newline="", encoding="utf-8") as f:
+            return {
+                _job_key(row.get("title") or row.get("job_title"), row.get("company"))
+                for row in csv.DictReader(f)
+                if row.get("status") == "applied"
+            }
+    except (OSError, csv.Error):
+        return set()
 
 def count_applications_today() -> int:
     if not Path(LOG_FILE).exists():
@@ -84,6 +105,7 @@ def run():
         count = cards.count()
         print(f"Found {count} jobs on the page.")
 
+        applied_keys = load_applied_job_keys()
         for idx in range(count):
             if applied >= run_success_limit:
                 print(f"Reached local limit of {run_success_limit}. Stopping.")
@@ -91,6 +113,7 @@ def run():
                 
             card = cards.nth(idx)
             text = card.inner_text()
+            stats_tracker.record_discovered()
             
             # Simple keyword matching for title since text block contains it all
             title = ""
@@ -108,6 +131,11 @@ def run():
                     
             if not title:
                 print(f"Skipped: (Title doesn't match required keywords)")
+                continue
+
+            if _job_key(title, "uplers") in applied_keys or _job_key(title, "Unknown") in applied_keys:
+                stats_tracker.record_previously_applied_skipped()
+                print(f"Skipped: {title} — already applied in an earlier run")
                 continue
 
             if text and profile.job_freshness_days:

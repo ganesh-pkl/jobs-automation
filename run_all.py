@@ -31,26 +31,8 @@ def run_script(script_name):
         print(f"\n[!] Failed to run {script_name}: {e}")
 
 def main():
-    scripts = [
-        "naukri_apply.py",
-        "linkedin_apply.py",
-        "hirist_apply.py",
-        "uplers_apply.py"
-    ]
-    
-    print("Beginning automated job application sequence across all platforms...\n")
-    
-    for i, script in enumerate(scripts):
-        run_script(script)
-        
-        # Wait a few seconds between scripts unless it's the last one
-        if i < len(scripts) - 1:
-            print("\nWaiting 10 seconds before starting the next platform...")
-            time.sleep(10)
-            
-    print(f"\n{'='*50}")
-    print("All platforms processed! Check applications_log.csv for your daily results.")
-    print(f"{'='*50}")
+    from daily_pipeline import run_pipeline
+    run_pipeline()
 
 if __name__ == "__main__":
     main()

@@ -19,6 +19,7 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 from common.profile import Profile
 from common import llm
+from common import stats_tracker
 
 SESSION_FILE = "session_linkedin.json"
 LOG_FILE = "applications_log.csv"
@@ -38,6 +39,29 @@ def log_row(row: list):
         if new_file:
             w.writerow(["timestamp", "source", "title", "company", "status", "reason"])
         w.writerow(row)
+
+
+def _job_key(title: str | None, company: str | None) -> tuple[str, str]:
+    return (
+        " ".join((title or "").lower().split()),
+        " ".join((company or "").lower().split()),
+    )
+
+
+def load_applied_job_keys(path: str = LOG_FILE) -> set[tuple[str, str]]:
+    log_path = Path(path)
+    if not log_path.exists():
+        return set()
+    try:
+        with log_path.open(newline="", encoding="utf-8") as f:
+            return {
+                _job_key(row.get("title"), row.get("company"))
+                for row in csv.DictReader(f)
+                if row.get("status") == "applied"
+            }
+    except (OSError, csv.Error):
+        return set()
+
 
 
 def page_has_stop_signal(page) -> str | None:
@@ -285,11 +309,19 @@ def run():
                 """)
                 print(f"Found {len(cards)} cards on the page.")
 
+                applied_keys = load_applied_job_keys()
                 for card in cards:
                     if applied >= profile.stop_after_n_applications:
                         break
                     idx = card["idx"]
                     title = card.get("title", "")
+                    company = card.get("company", "")
+
+                    stats_tracker.record_discovered()
+                    if _job_key(title, company) in applied_keys:
+                        stats_tracker.record_previously_applied_skipped()
+                        print(f"Skipped: {title} @ {company} — already applied in an earlier run")
+                        continue
                     
                     # Enforce strict title matching based on profile.yaml
                     required_keywords = profile.data.get("role_required_keywords", {}).get(role)

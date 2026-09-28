@@ -23,6 +23,7 @@ from common.profile import Profile
 from common import llm
 from common import learned_answers
 from common.human_input import ask_user
+from common import stats_tracker
 
 SESSION_FILE = "session_naukri.json"
 LOG_FILE = "applications_log.csv"
@@ -939,13 +940,19 @@ def run(preview: bool = False):
                     print("No new listings on this page -- treating as the last page for this role.")
                     break
 
+                for card in cards:
+                    if card.get("jobId") in seen_job_ids:
+                        stats_tracker.record_duplicate_skipped()
+                
                 for card in new_cards:
                     seen_job_ids.add(card.get("jobId"))
+                    stats_tracker.record_discovered()
                     if applied >= run_success_limit or attempted >= max_attempts:
                         break
 
                     key = _job_key(card.get("title"), card.get("company"))
                     if key in applied_job_keys:
+                        stats_tracker.record_previously_applied_skipped()
                         print(
                             f"Skipped: {card.get('title')} @ {card.get('company')} — "
                             "already applied in an earlier run"

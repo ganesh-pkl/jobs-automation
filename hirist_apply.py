@@ -14,6 +14,7 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 from common.profile import Profile
 from common import llm
+from common import stats_tracker
 
 SESSION_FILE = "session_hirist.json"
 LOG_FILE = "applications_log.csv"
@@ -28,9 +29,30 @@ def log_row(row: list):
             w.writerow(["timestamp", "source", "title", "company", "status", "reason"])
         w.writerow(row)
 
+def _job_key(title: str | None, company: str | None) -> tuple[str, str]:
+    return (
+        " ".join((title or "").lower().split()),
+        " ".join((company or "").lower().split()),
+    )
+
+def load_applied_job_keys(path: str = LOG_FILE) -> set[tuple[str, str]]:
+    log_path = Path(path)
+    if not log_path.exists():
+        return set()
+    try:
+        with log_path.open(newline="", encoding="utf-8") as f:
+            return {
+                _job_key(row.get("title"), row.get("company"))
+                for row in csv.DictReader(f)
+                if row.get("status") == "applied"
+            }
+    except (OSError, csv.Error):
+        return set()
+
 def run():
     profile = Profile.load()
     roles = profile.target_roles
+    applied_keys = load_applied_job_keys()
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=profile.browser_mode == "headless")
@@ -72,6 +94,12 @@ def run():
                         posted_text = line.lower()
                     if "@ " in line:
                         company = line.split("@")[-1].strip()
+                
+                stats_tracker.record_discovered()
+                if _job_key(title, company) in applied_keys:
+                    stats_tracker.record_previously_applied_skipped()
+                    print(f"Skipped: {title} @ {company} — already applied in an earlier run")
+                    continue
                 
                 # Check experience limits
                 if exp_text:
