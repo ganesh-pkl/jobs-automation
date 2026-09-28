@@ -36,6 +36,18 @@ def _clean(val: str | None) -> str:
     return " ".join(val.split()).strip()
 
 
+def reset_external_jobs_csv(file_path: str = EXTERNAL_LOG_FILE) -> bool:
+    """
+    Resets/clears the daily external-jobs CSV with fresh headers at the start of a run.
+    Permanent application history is preserved and untouched.
+    """
+    path = Path(file_path)
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+        writer.writeheader()
+    return True
+
+
 def _normalize_key(title: str, company: str) -> tuple[str, str]:
     t = re.sub(r"[^a-zA-Z0-9\s]", "", (title or "").lower())
     c = re.sub(r"[^a-zA-Z0-9\s]", "", (company or "").lower())

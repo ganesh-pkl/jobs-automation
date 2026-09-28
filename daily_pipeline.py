@@ -19,7 +19,7 @@ from datetime import datetime, date
 from pathlib import Path
 
 from common.profile import Profile
-from common.external_tracker import EXTERNAL_LOG_FILE
+from common.external_tracker import EXTERNAL_LOG_FILE, reset_external_jobs_csv
 from common import stats_tracker
 
 APPLICATIONS_LOG = "applications_log.csv"
@@ -113,14 +113,17 @@ def run_pipeline():
     today_str = today.strftime("%Y-%m-%d")
     stats_tracker.reset_stats()
 
+    # CRITICAL: Reset the external-jobs working CSV at the start of every run.
+    # Permanent application history (applications_log.csv) is never cleared.
+    reset_external_jobs_csv()
+
     initial_applied_history = load_historical_applied()
-    initial_external_count = get_external_jobs_count()
 
     print("=" * 65)
     print(f"       STARTING DAILY JOB APPLICATION PIPELINE — {today_str}")
     print("=" * 65)
-    print(f"Historical Successful Applications: {len(initial_applied_history)}")
-    print(f"External/Manual Jobs in CSV:        {initial_external_count}")
+    print(f"Permanent Application History:      {len(initial_applied_history)} jobs recorded")
+    print(f"Today's External Jobs CSV:          Reset to 0 rows (active working queue)")
     print("=" * 65 + "\n")
 
     # 1. Run Hirist
@@ -167,7 +170,7 @@ def run_pipeline():
     uplers_applied_today = final_stats["uplers"]
     total_applied_today = sum(final_stats.values())
     total_applied_historical = len(final_applied_history)
-    new_external_count = max(0, final_external_count - initial_external_count)
+    new_external_count = final_external_count
 
     new_external_jobs = get_new_external_jobs_today(today)
 
