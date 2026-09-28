@@ -12,7 +12,7 @@ from .env import setting
 from pathlib import Path
 from groq import Groq
 
-MODEL = "llama-3.3-70b-versatile"  # solid free-tier model for this kind of drafting task
+MODEL = "qwen/qwen3.8-27b"  # active solid free-tier model for screening question drafting
 
 _SYSTEM_INSTRUCTIONS = """\
 You are drafting a short answer to a job-application screening question, in the

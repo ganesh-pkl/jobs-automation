@@ -173,16 +173,26 @@ def passes_filters(card: dict, profile: Profile, role: str) -> tuple[bool, str]:
         if not any(inc.lower() in company for inc in profile.company_include_only):
             return False, "not in include-only list"
 
+    location_lower = location.lower() if location else ""
     remote_markers = ("remote", "work from home", "wfh")
-    is_remote = any(marker in location for marker in remote_markers)
-    allowed_locations = [profile.current_city, *profile.relocate_cities]
-    is_allowed_location = any(
-        place and place.lower() in location for place in allowed_locations
-    )
-    if profile.work_mode == "remote_only" and location and not is_remote:
+    is_remote = any(marker in location_lower for marker in remote_markers)
+    is_hybrid = "hybrid" in location_lower
+
+    if profile.work_mode == "remote_only" and not is_remote:
         return False, f"not a remote job ({card.get('location')})"
-    if location and not is_remote and not is_allowed_location:
-        return False, f"location not allowed ({card.get('location')})"
+
+    if not is_remote:
+        # Must match an allowed city
+        allowed_locations = [profile.current_city, *profile.relocate_cities]
+        city_match = None
+        for place in allowed_locations:
+            if place and place.lower() in location_lower:
+                city_match = place.lower()
+                break
+                
+        if not city_match:
+            return False, f"location not allowed ({card.get('location')})"
+            
 
     exp_text = card.get("exp") or ""
     if profile.data.get("require_zero_experience"):
@@ -207,14 +217,31 @@ def passes_filters(card: dict, profile: Profile, role: str) -> tuple[bool, str]:
             for n in re.findall(r"\d+(?:\.\d+)?", salary_text)
         ]
         if not salary_numbers:
-            return False, "salary not stated on listing"
-        if profile.data.get("require_salary_above_floor"):
-            if not re.search(r"(?:lpa|lacs?\s*p\.?\s*a\.?|lakhs?\s*p\.?\s*a\.?)", salary_text, re.I):
-                return False, f"annual salary units not confirmed ({salary_text})"
-            if min(salary_numbers) <= float(salary_floor):
-                return False, f"salary range is not strictly above floor ({salary_text})"
-        if max(salary_numbers) < float(salary_floor):
-            return False, f"salary below floor ({salary_text})"
+            if profile.data.get("require_stated_salary"):
+                return False, "salary not stated on listing"
+        else:
+            if profile.data.get("require_salary_above_floor"):
+                if not re.search(r"(?:lpa|lacs?\s*p\.?\s*a\.?|lakhs?\s*p\.?\s*a\.?)", salary_text, re.I):
+                    return False, f"annual salary units not confirmed ({salary_text})"
+                if min(salary_numbers) <= float(salary_floor):
+                    return False, f"salary range is not strictly above floor ({salary_text})"
+            if max(salary_numbers) < float(salary_floor):
+                return False, f"salary below floor ({salary_text})"
+
+    posted_text = (card.get("posted") or "").lower()
+    if posted_text and profile.job_freshness_days:
+        age_days = 0
+        nums = [int(s) for s in posted_text.split() if s.isdigit()]
+        num = nums[0] if nums else 0
+        if "month" in posted_text:
+            age_days = num * 30 if num else 30
+        elif "week" in posted_text:
+            age_days = num * 7 if num else 7
+        elif "day" in posted_text:
+            age_days = num if num else 1
+
+        if age_days > profile.job_freshness_days:
+            return False, f"job posting is too old ({card.get('posted')})"
 
     return True, ""
 
@@ -248,6 +275,7 @@ def enumerate_cards(page):
             exp: c.querySelector('.expwdth')?.innerText,
             location: c.querySelector('.locWdth')?.innerText,
             salary: c.querySelector('.sal, .salary, .salaryWdth, [class*="salary"]')?.innerText,
+            posted: c.querySelector('.job-post-day, [class*="post-day"], .type, .sub-type')?.innerText,
           }))
           .filter(c => c.title && c.href)
     """, default=[]) or []
@@ -860,12 +888,25 @@ def run(preview: bool = False):
                 if applied >= run_success_limit or attempted >= max_attempts:
                     break
 
-                # Confirmed pattern: Naukri appends "-N" directly to the slug
-                # for page N (page 1 has no suffix), e.g.
-                # azure-data-engineer-jobs-2 for page 2.
+                # Build location slug
+                # Build location slug prioritizing remote, then current city, then relocate cities
+                allowed_locations = []
+                if profile.work_mode in ("remote_only", "hybrid", "any", "flexible"):
+                    allowed_locations.append("remote")
+                if profile.current_city:
+                    allowed_locations.append(profile.current_city)
+                allowed_locations.extend(profile.relocate_cities)
+                
+                # Deduplicate and format
+                seen = set()
+                deduped_locations = [loc.lower() for loc in allowed_locations if loc and loc.lower() not in seen and not seen.add(loc.lower())]
+                loc_slug = "-".join(deduped_locations).replace(" ", "-")
+                
+                base_path = f"{slug}-jobs-in-{loc_slug}" if loc_slug else f"{slug}-jobs"
                 page_suffix = "" if page_no == 1 else f"-{page_no}"
+                
                 url = (
-                    f"https://www.naukri.com/{slug}-jobs{page_suffix}"
+                    f"https://www.naukri.com/{base_path}{page_suffix}"
                     f"?experience={exp_param}"
                     f"&sort=f"
                 )
@@ -933,7 +974,10 @@ def run(preview: bool = False):
                         if apply_state == "external":
                             log_row([datetime.now(), "naukri", card.get("title"),
                                       card.get("company"), "skipped", "external apply"])
-                            print(f"Skipped: {card.get('title')} @ {card.get('company')} — external apply")
+                            from common.external_tracker import log_external_job
+                            ext_url = safe_evaluate(page, "() => document.querySelector('#company-site-button')?.href || ''", default="")
+                            log_external_job("naukri", card.get("title") or "", card.get("company") or "", card.get("href") or "", ext_url, card.get("location") or "", card.get("exp") or "", card.get("posted") or "")
+                            print(f"Skipped (External Apply logged to CSV): {card.get('title')} @ {card.get('company')}")
                             continue
                         if apply_state == "none":
                             log_row([datetime.now(), "naukri", card.get("title"),

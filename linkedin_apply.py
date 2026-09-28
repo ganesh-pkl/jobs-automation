@@ -91,33 +91,24 @@ def fill_text_field(page, field_id: str, text: str):
 
 
 def fill_form_step(page, profile: Profile, job_context: str):
-    answers = profile.answer_library()
+    from common.answers import get_screening_answer
     state = describe_modal(page)
     if state.get("error"):
         time.sleep(1.5)
         state = describe_modal(page)
 
     for field in state.get("fields", []):
-        label = (field.get("label") or "").lower()
+        label = (field.get("label") or "").strip()
         if not label or field.get("value"):
             continue  # already filled or unlabeled, leave it
 
-        matched = None
-        for key, val in answers.items():
-            if key.replace("_", " ") in label:
-                matched = val
-                break
-
-        if matched is not None:
+        ans = get_screening_answer(label, profile, job_context)
+        if ans:
             if field["tag"] == "SELECT":
-                pass  # dropdowns handled separately below if needed
+                pass  # dropdowns handled separately if needed
             else:
-                fill_text_field(page, field["id"], str(matched))
-        elif field["tag"] in ("INPUT",) and field["type"] == "text":
-            draft = llm.draft_answer(label, profile.llm_context(), job_context)
-            if draft.startswith("[NEEDS_HUMAN_INPUT"):
-                raise RuntimeError(f"profile gap on '{label}': {draft}")
-            fill_text_field(page, field["id"], draft)
+                fill_text_field(page, field["id"], str(ans))
+
 
 
 def click_modal_button(page, text: str) -> bool:
@@ -151,7 +142,12 @@ class SubmissionUnconfirmed(Exception):
 def run_one_application(page, profile: Profile, job_title: str, company: str) -> bool:
     job_context = f"{job_title} at {company}"
 
-    if not click_modal_button(page, "Easy Apply"):
+    is_easy_apply_clicked = page.evaluate("""() => {
+        const btn = document.querySelector('.jobs-apply-button');
+        if (btn && btn.innerText.includes('Easy Apply')) { btn.click(); return true; }
+        return false;
+    }""")
+    if not is_easy_apply_clicked:
         return False
     time.sleep(1.5)
 
@@ -175,13 +171,15 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
             print(review_text[:800])
             if not click_modal_button(page, "Submit application"):
                 raise SubmissionUnconfirmed("submit button click did not register")
-            time.sleep(2)
+            time.sleep(4)
             confirmation_text = page.inner_text("body")
             if not _is_application_confirmation(confirmation_text):
                 raise SubmissionUnconfirmed(
-                    "submit clicked, but LinkedIn did not show an application confirmation"
+                    f"LinkedIn did not show an application confirmation. Saw text starting with: {confirmation_text[:200]}"
                 )
+            # Try to close the success modal using any known close buttons
             click_modal_button(page, "Done")
+            click_modal_button(page, "Not now")
             return True
         elif "Review" in buttons:
             click_modal_button(page, "Review")
@@ -205,61 +203,148 @@ def run():
         context = browser.new_context(storage_state=SESSION_FILE)
         page = context.new_page()
 
+        locations = list(dict.fromkeys([profile.current_city, *profile.relocate_cities, "Remote"]))
+        freshness_seconds = int(profile.job_freshness_days) * 86400 if hasattr(profile, "job_freshness_days") else 604800
         for role in profile.target_roles:
-            if applied >= profile.stop_after_n_applications:
-                break
-            search_url = (
-                "https://www.linkedin.com/jobs/search/?keywords="
-                + role.replace(" ", "%20")
-                + "&f_AL=true"  # Easy Apply filter
-            )
-            print(f"\n--- Searching LinkedIn: {role} ---")
-            page.goto(search_url)
-            time.sleep(3)
-
-            stop = page_has_stop_signal(page)
-            if stop:
-                print(f"STOPPING: {stop}")
-                log_row([datetime.now(), "linkedin", "-", "-", "stopped", stop])
-                browser.close()
-                return
-
-            cards = page.evaluate("""
-                () => Array.from(document.querySelectorAll('.jobs-search-results-list li, .scaffold-layout__list li'))
-                  .map(c => ({
-                    title: c.querySelector('[class*="job-card-list__title"]')?.innerText?.trim(),
-                    company: c.querySelector('[class*="job-card-container__company-name"]')?.innerText?.trim(),
-                  })).filter(c => c.title)
-            """)
-
-            for idx, card in enumerate(cards):
+            for loc in locations:
+                if not loc:
+                    continue
                 if applied >= profile.stop_after_n_applications:
                     break
+                search_url = (
+                    "https://www.linkedin.com/jobs/search/?keywords="
+                    + role.replace(" ", "%20")
+                    + "&location=" + loc.replace(" ", "%20")
+                    + "&f_AL=true"  # Easy Apply filter
+                    + f"&f_TPR=r{freshness_seconds}" # Based on job freshness days
+                )
+                print(f"\n--- Searching LinkedIn: {role} ({loc}) ---")
                 try:
-                    page.click(f"(.jobs-search-results-list li, .scaffold-layout__list li) >> nth={idx}")
-                    time.sleep(1.5)
-                    success = run_one_application(page, profile, card.get("title", ""), card.get("company", ""))
-                    if success:
-                        applied += 1
-                        log_row([datetime.now(), "linkedin", card.get("title"),
-                                  card.get("company"), "applied", ""])
-                        print(f"Applied: {card.get('title')} @ {card.get('company')} ({applied} total)")
-                    else:
-                        log_row([datetime.now(), "linkedin", card.get("title"),
-                                  card.get("company"), "skipped", "no Easy Apply button"])
-                except SubmissionUnconfirmed as e:
-                    print(f"UNCERTAIN: {card.get('title')} @ {card.get('company')} — {e}")
-                    log_row([datetime.now(), "linkedin", card.get("title"),
-                              card.get("company"), "uncertain", str(e)])
-                    continue
-                except RuntimeError as e:
-                    print(f"STOPPING: {e}")
-                    log_row([datetime.now(), "linkedin", card.get("title"),
-                              card.get("company"), "stopped", str(e)])
+                    page.goto(search_url, timeout=20000)
+                    page.wait_for_selector('.job-card-container, [data-job-id], .jobs-search-results-list, .scaffold-layout__list', timeout=10000)
+                except PWTimeout:
+                    pass
+                except Exception as e:
+                    print(f"  (navigation timeout or error: {e})")
+                time.sleep(3)
+
+                stop = page_has_stop_signal(page)
+                if stop:
+                    print(f"STOPPING: {stop}")
+                    log_row([datetime.now(), "linkedin", "-", "-", "stopped", stop])
                     browser.close()
                     return
 
-                time.sleep(profile.pace_seconds_between_actions)
+                cards = page.evaluate("""
+                    () => {
+                        const cards = [];
+                        const items = Array.from(document.querySelectorAll('li[data-occludable-job-id], .job-card-container, .jobs-search-results__list-item, .scaffold-layout__list-item, .jobs-search-results-list li, [data-job-id]'));
+                        if (items.length > 0) {
+                            items.forEach((c, idx) => {
+                                const titleEl = c.querySelector('a.job-card-list__title--link, [class*="job-card-list__title"], a.job-card-container__link, .job-card-list__title, a[data-control-id], strong, a[href*="/jobs/view/"]');
+                                let title = titleEl ? titleEl.innerText.trim() : "";
+                                if (!title && titleEl && titleEl.getAttribute("aria-label")) {
+                                    title = titleEl.getAttribute("aria-label").trim();
+                                }
+                                const href = titleEl ? titleEl.href : "";
+                                const compEl = c.querySelector('.artdeco-entity-lockup__subtitle, [class*="company-name"], [class*="primary-description"], .job-card-container__primary-description');
+                                const timeEl = c.querySelector('time, [class*="listed-time"], [class*="footer-item"]');
+                                if (title) {
+                                    cards.push({
+                                        idx: idx,
+                                        title: title,
+                                        href: href,
+                                        company: compEl ? compEl.innerText.trim() : "",
+                                        posted: timeEl ? timeEl.innerText.trim() : "",
+                                    });
+                                }
+                            });
+                        }
+                        if (cards.length === 0) {
+                            const anchors = Array.from(document.querySelectorAll('a[href*="/jobs/view/"]'));
+                            const seen = new Set();
+                            anchors.forEach((a, idx) => {
+                                const title = a.innerText.trim();
+                                const href = a.href;
+                                if (!title || seen.has(href)) return;
+                                seen.add(href);
+                                const parent = a.closest('li, [class*="card"], div.flex-grow-1, [data-job-id]') || a.parentElement;
+                                const compEl = parent ? parent.querySelector('[class*="company"], [class*="subtitle"], [class*="primary-description"]') : null;
+                                const timeEl = parent ? parent.querySelector('time, [class*="time"], [class*="footer"]') : null;
+                                cards.push({
+                                    idx: idx,
+                                    title: title,
+                                    href: href,
+                                    company: compEl ? compEl.innerText.trim() : "",
+                                    posted: timeEl ? timeEl.innerText.trim() : "",
+                                });
+                            });
+                        }
+                        return cards;
+                    }
+                """)
+                print(f"Found {len(cards)} cards on the page.")
+
+                for card in cards:
+                    if applied >= profile.stop_after_n_applications:
+                        break
+                    idx = card["idx"]
+                    title = card.get("title", "")
+                    
+                    # Enforce strict title matching based on profile.yaml
+                    required_keywords = profile.data.get("role_required_keywords", {}).get(role)
+                    if required_keywords:
+                        if not any(k.lower() in title.lower() for k in required_keywords):
+                            print(f"Skipped: {title} @ {card.get('company')} (Title doesn't match {role} keywords)")
+                            continue
+
+                    posted_text = (card.get("posted") or "").lower()
+                    if posted_text and profile.job_freshness_days:
+                        age_days = 0
+                        nums = [int(s) for s in posted_text.split() if s.isdigit()]
+                        num = nums[0] if nums else 0
+                        if "month" in posted_text:
+                            age_days = num * 30 if num else 30
+                        elif "week" in posted_text:
+                            age_days = num * 7 if num else 7
+                        elif "day" in posted_text:
+                            age_days = num if num else 1
+
+                        if age_days > profile.job_freshness_days:
+                            print(f"Skipped: {title} @ {card.get('company')} (Job is too old: {card.get('posted')})")
+                            continue
+
+                    try:
+                        page.locator(".jobs-search-results__list-item, .scaffold-layout__list-item, .jobs-search-results-list li, .scaffold-layout__list li").nth(idx).click()
+                        time.sleep(1.5)
+                        success = run_one_application(page, profile, card.get("title", ""), card.get("company", ""))
+                        if success:
+                            applied += 1
+                            log_row([datetime.now(), "linkedin", card.get("title"),
+                                      card.get("company"), "applied", ""])
+                            print(f"Applied: {card.get('title')} @ {card.get('company')} ({applied} total)")
+                            time.sleep(profile.min_delay_seconds_between_applications)
+                        else:
+                            log_row([datetime.now(), "linkedin", card.get("title"),
+                                      card.get("company"), "skipped", "no Easy Apply button"])
+                            from common.external_tracker import log_external_job
+                            job_link = page.url
+                            ext_link = page.evaluate("() => document.querySelector('.jobs-apply-button')?.href || ''")
+                            log_external_job("linkedin", card.get("title") or "", card.get("company") or "", job_link or "", ext_link or "", loc, "", card.get("posted") or "")
+                            print(f"Skipped (External Apply logged to CSV): {card.get('title')} @ {card.get('company')}")
+                            time.sleep(3)
+                    except SubmissionUnconfirmed as e:
+                        print(f"UNCERTAIN: {card.get('title')} @ {card.get('company')} — {e}")
+                        log_row([datetime.now(), "linkedin", card.get("title"),
+                                  card.get("company"), "uncertain", str(e)])
+                        time.sleep(profile.min_delay_seconds_between_applications)
+                        continue
+                    except RuntimeError as e:
+                        print(f"STOPPING: {e}")
+                        log_row([datetime.now(), "linkedin", card.get("title"),
+                                  card.get("company"), "stopped", str(e)])
+                        browser.close()
+                        return
 
         browser.close()
 

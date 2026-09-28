@@ -18,6 +18,8 @@ from playwright.sync_api import sync_playwright
 SITES = {
     "naukri": "https://www.naukri.com/nlogin/login",
     "linkedin": "https://www.linkedin.com/login",
+    "hirist": "https://www.hirist.tech/",
+    "uplers": "https://platform.uplers.com/login"
 }
 
 

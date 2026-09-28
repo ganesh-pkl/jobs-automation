@@ -4,6 +4,8 @@ session_*.json
 profile.yaml
 learned_answers.json
 applications_log.csv
+external_jobs.csv
+*.csv
 debug_screenshots/
 
 # Resumes and other applicant documents
