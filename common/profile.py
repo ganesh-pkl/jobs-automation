@@ -52,7 +52,7 @@ class Profile:
         if not isinstance(data["target_roles"], list) or not data["target_roles"]:
             raise ValueError("target_roles must be a non-empty list.")
         for key in ("target_roles", "skills_primary", "skills_adjacent", "certifications",
-                    "company_exclude", "company_include_only", "relocate_cities"):
+                    "company_exclude", "company_include_only", "relocate_cities", "remote_locations"):
             value = data.get(key, [])
             if not isinstance(value, list) or any(not isinstance(v, str) or not v.strip() for v in value):
                 raise ValueError(f"{key} must be a list of non-empty strings.")
@@ -66,18 +66,18 @@ class Profile:
                 raise ValueError(f"{key} must be a finite non-negative number.")
         for key in ("stop_after_n_applications", "stop_after_n_attempts", "daily_application_limit",
                     "max_pages_per_role", "human_input_timeout_seconds", "job_freshness_days",
-                    "naukri_daily_limit", "linkedin_daily_limit", "foundit_daily_limit"):
+                    "naukri_daily_limit", "linkedin_daily_limit", "foundit_daily_limit", "max_applicants"):
             if key in data:
                 value = data[key]
                 if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                     raise ValueError(f"{key} must be a positive integer.")
-        for key in ("night_shift_ok", "weekend_ok", "immediately_available"):
+        for key in ("night_shift_ok", "weekend_ok", "immediately_available", "under_10_applicants_only"):
             if key in data and not isinstance(data[key], bool):
                 raise ValueError(f"{key} must be true or false, without quotes.")
         for key in ("current_city", "resume_file_name"):
             if not isinstance(data.get(key), str) or not data[key].strip():
                 raise ValueError(f"{key} must be a non-empty string.")
-        if data.get("work_mode", "flexible") not in {"onsite_or_hybrid", "remote_only", "flexible"}:
+        if data.get("work_mode", "flexible") not in {"onsite_or_hybrid", "remote_only", "remote_first", "flexible"}:
             raise ValueError("Invalid work_mode.")
         if data.get("ctc_disclosure_policy", "negotiable") not in {"negotiable", "real_numbers"}:
             raise ValueError("Invalid ctc_disclosure_policy.")
@@ -85,8 +85,9 @@ class Profile:
                              ("min_delay_seconds_between_applications", "max_delay_seconds_between_applications")):
             if lower in data and upper in data and data[lower] > data[upper]:
                 raise ValueError(f"{lower} must not exceed {upper}.")
-        defaults = {"company_exclude": [], "company_include_only": [], "relocate_cities": [],
-                    "work_mode": "flexible", "seniority_floor_years": 0, "seniority_ceiling_years": 5,
+        defaults = {"company_exclude": [], "company_include_only": [], "relocate_cities": [], "remote_locations": [],
+                    "work_mode": "flexible", "under_10_applicants_only": True, "max_applicants": 10,
+                    "seniority_floor_years": 0, "seniority_ceiling_years": 5,
                     "job_freshness_days": 1, "stop_after_n_applications": 100, "ctc_disclosure_policy": "negotiable",
                     "naukri_daily_limit": 40, "linkedin_daily_limit": 15, "foundit_daily_limit": 30}
         for key, value in defaults.items():

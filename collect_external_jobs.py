@@ -31,11 +31,16 @@ def collect_naukri_external_jobs(page, profile: Profile) -> int:
 
     for role in profile.target_roles:
         role_slug = role.lower().replace(" ", "-").replace("/", "-")
-        base_path = f"{role_slug}-jobs-in-{loc_slug}" if loc_slug else f"{role_slug}-jobs"
+        if profile.work_mode == "remote_only":
+            base_path = f"{role_slug}-remote-jobs"
+            query_params = f"experience={exp_param}&sort=f&wfhType=0&wfhType=2&jobAge={profile.job_freshness_days}"
+        else:
+            base_path = f"{role_slug}-jobs-in-{loc_slug}" if loc_slug else f"{role_slug}-jobs"
+            query_params = f"experience={exp_param}&sort=f&jobAge={profile.job_freshness_days}"
         
         for page_no in range(1, int(profile.max_pages_per_role) + 1):
             page_suffix = "" if page_no == 1 else f"-{page_no}"
-            url = f"https://www.naukri.com/{base_path}{page_suffix}?experience={exp_param}&sort=f&jobAge={profile.job_freshness_days}"
+            url = f"https://www.naukri.com/{base_path}{page_suffix}?{query_params}"
             
             print(f"Scanning Naukri: {role} (page {page_no})...")
             try:
@@ -91,18 +96,58 @@ def collect_naukri_external_jobs(page, profile: Profile) -> int:
 def collect_linkedin_external_jobs(page, profile: Profile) -> int:
     print("\n--- Scanning LinkedIn for External Jobs (Age <= 7 days) ---")
     added = 0
-    locations = list(dict.fromkeys([profile.current_city, *profile.relocate_cities, "Remote"]))
+    remote_only = (profile.work_mode == "remote_only")
+    if remote_only:
+        configured_remote = profile.data.get("remote_locations")
+        if configured_remote and isinstance(configured_remote, list) and len(configured_remote) > 0:
+            locations = configured_remote
+        else:
+            locations = [
+                "Worldwide",
+                "Remote",
+                "United States",
+                "European Union",
+                "United Kingdom",
+                "Germany",
+                "Netherlands",
+                "Canada",
+                "Australia",
+                "Ireland",
+                "Switzerland",
+                "Sweden",
+                "Singapore",
+                "United Arab Emirates",
+                "New Zealand",
+                "India",
+            ]
+    else:
+        locations = list(dict.fromkeys([profile.current_city, *profile.relocate_cities, "Remote"]))
+
     freshness_seconds = int(profile.job_freshness_days) * 86400
+
+    under_10_applicants = bool(profile.data.get("under_10_applicants_only", True))
+
+    from linkedin_apply import LINKEDIN_GEO_IDS
 
     for role in profile.target_roles[:5]:  # Top role queries
         for loc in locations:
             if not loc:
                 continue
+            gid_param = ""
+            loc_clean = loc.strip().lower()
+            if loc_clean in LINKEDIN_GEO_IDS:
+                gid_param = f"&geoId={LINKEDIN_GEO_IDS[loc_clean]}"
+            elif remote_only:
+                gid_param = "&geoId=92000000"
+
             url = (
                 "https://www.linkedin.com/jobs/search/?keywords="
                 + role.replace(" ", "%20")
                 + "&location=" + loc.replace(" ", "%20")
+                + gid_param
                 + f"&f_TPR=r{freshness_seconds}"
+                + ("&f_WT=2" if profile.work_mode == "remote_only" else ("&f_WT=2%2C3" if profile.work_mode == "remote_first" else ""))
+                + ("&f_EA=true" if under_10_applicants else "")
             )
             print(f"Scanning LinkedIn: {role} ({loc})...")
             try:
@@ -143,6 +188,7 @@ def collect_linkedin_external_jobs(page, profile: Profile) -> int:
                             added += 1
                             print(f"  [+] Logged External Job: {title} @ {company} -> {ext_link or job_link}")
                 except Exception:
+                    continue
                     continue
 
 def collect_foundit_external_jobs(page, profile: Profile) -> int:

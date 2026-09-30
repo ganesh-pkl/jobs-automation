@@ -232,6 +232,115 @@ class BulkRunSafetyTests(unittest.TestCase):
             choose.assert_called_once_with(75.0, 135.0)
             sleep.assert_called_once_with(90)
 
+    def test_remote_only_location_filter(self):
+        profile = Profile(
+            {
+                "role_required_keywords": {"Software Developer": ["software developer"]},
+                "company_exclude": [],
+                "company_include_only": [],
+                "current_city": "Bengaluru",
+                "relocate_cities": [],
+                "work_mode": "remote_only",
+                "seniority_floor_years": 0,
+                "seniority_ceiling_years": 5,
+            }
+        )
+        base = {
+            "title": "Software Developer",
+            "company": "Example",
+            "exp": "0-2 Yrs",
+        }
+        # On-site in Bengaluru should be rejected under remote_only
+        self.assertFalse(
+            naukri_apply.passes_filters(
+                {**base, "location": "Bengaluru"}, profile, "Software Developer"
+            )[0]
+        )
+        # Remote should be accepted
+        self.assertTrue(
+            naukri_apply.passes_filters(
+                {**base, "location": "Remote"}, profile, "Software Developer"
+            )[0]
+        )
+        # Work from home should be accepted
+        self.assertTrue(
+            naukri_apply.passes_filters(
+                {**base, "location": "Anywhere in India (Work from Home)"}, profile, "Software Developer"
+            )[0]
+        )
+
+    def test_linkedin_search_url_remote_worldwide(self):
+        url = linkedin_apply.build_linkedin_search_url(
+            role="Full Stack Developer",
+            location="Worldwide",
+            freshness_seconds=86400,
+            start_offset=25,
+            remote_only=True,
+            under_10_applicants=True,
+        )
+        self.assertIn("keywords=Full+Stack+Developer", url)
+        self.assertIn("location=Worldwide", url)
+        self.assertIn("f_WT=2", url)
+        self.assertIn("sortBy=DD", url)
+        self.assertIn("f_AL=true", url)
+        self.assertIn("f_EA=true", url)
+        self.assertIn("f_TPR=r86400", url)
+        self.assertIn("start=25", url)
+
+    def test_applicant_count_limit_filter(self):
+        profile = Profile(
+            {
+                "role_required_keywords": {"Software Developer": ["software developer"]},
+                "company_exclude": [],
+                "company_include_only": [],
+                "current_city": "Bengaluru",
+                "relocate_cities": [],
+                "work_mode": "remote_only",
+                "under_10_applicants_only": True,
+                "max_applicants": 10,
+                "seniority_floor_years": 0,
+                "seniority_ceiling_years": 5,
+            }
+        )
+        base = {
+            "title": "Software Developer",
+            "company": "Example",
+            "location": "Remote",
+            "exp": "0-2 Yrs",
+        }
+        # 5 applicants should pass
+        self.assertTrue(
+            naukri_apply.passes_filters(
+                {**base, "applicants": "5 applicants"}, profile, "Software Developer"
+            )[0]
+        )
+        # 25 applicants should fail
+        ok, reason = naukri_apply.passes_filters(
+            {**base, "applicants": "25 applicants"}, profile, "Software Developer"
+        )
+        self.assertFalse(ok)
+        self.assertIn("too many applicants", reason)
+
+    def test_naukri_search_url_remote(self):
+        profile = Profile(
+            {
+                "target_roles": ["Full Stack Developer"],
+                "total_experience_years": 3,
+                "notice_period_days": 30,
+                "current_ctc_lpa": 10,
+                "expected_ctc_lpa": 15,
+                "resume_file_name": "resume.pdf",
+                "work_mode": "remote_only",
+                "job_freshness_days": 1,
+            }
+        )
+        url = naukri_apply.build_naukri_search_url("Full Stack Developer", 2, profile)
+        self.assertIn("full-stack-developer-remote-jobs-2", url)
+        self.assertIn("wfhType=0", url)
+        self.assertIn("wfhType=2", url)
+        self.assertIn("sort=f", url)
+        self.assertIn("jobAge=1", url)
+
 
 if __name__ == "__main__":
     unittest.main()

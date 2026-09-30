@@ -146,6 +146,10 @@ def run(limit: int | None = None):
                             if hi < profile.seniority_floor_years or lo > profile.seniority_ceiling_years:
                                 print(f"Skipped: {title} @ {company} (Experience range mismatch: {exp_text})")
                                 continue
+                        elif len(digits) == 1:
+                            if digits[0] > profile.seniority_ceiling_years:
+                                print(f"Skipped: {title} @ {company} (Experience '{digits[0]}+ yrs' exceeds {profile.seniority_ceiling_years} yrs ceiling)")
+                                continue
                                 
                     # Check job age
                     if posted_text:

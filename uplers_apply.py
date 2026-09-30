@@ -81,6 +81,103 @@ def count_applications_today() -> int:
                     pass
     return count
 
+def fill_uplers_modal(page, profile: Profile, job_title: str) -> bool:
+    """Fills all fields in the Uplers screening modal and submits."""
+    from datetime import datetime, timedelta
+    from common.answers import get_screening_answer
+
+    modal = page.locator(
+        ".modal.signupflow.apply, div[role='dialog'], .modal-content, .ReactModal__Content"
+    ).first
+    try:
+        modal.wait_for(state="visible", timeout=6000)
+    except Exception:
+        return True
+
+    print("  Detected screening modal! Auto-filling...")
+
+    # 1. Total Experience (Years & Months)
+    exp_years = int(profile.total_experience_years)
+    exp_inputs = modal.locator("input[name='total_experience']")
+    if exp_inputs.count() >= 1:
+        if not exp_inputs.nth(0).input_value():
+            exp_inputs.nth(0).fill(str(exp_years))
+    if exp_inputs.count() >= 2:
+        if not exp_inputs.nth(1).input_value():
+            exp_inputs.nth(1).fill("0")
+
+    # 2. Current CTC & Expected CTC
+    curr_ctc_input = modal.locator("#current_ctc, input[name='current_ctc']")
+    if curr_ctc_input.count() > 0 and not curr_ctc_input.first.input_value():
+        c_ctc = str(profile.current_ctc_lpa) if profile.current_ctc_lpa is not None else "6"
+        curr_ctc_input.first.fill(c_ctc)
+
+    exp_ctc_input = modal.locator("#expected_ctc, input[name='expected_ctc']")
+    if exp_ctc_input.count() > 0 and not exp_ctc_input.first.input_value():
+        e_ctc = str(profile.expected_ctc_lpa) if profile.expected_ctc_lpa is not None else "10"
+        exp_ctc_input.first.fill(e_ctc)
+
+    # 3. Date input (Earliest joining date / Last working day for immediate joiner)
+    future_date = (datetime.now() + timedelta(days=2)).strftime("%d/%m/%Y")
+    date_inputs = modal.locator(
+        ".date-input, input[placeholder*='Ex: '], input[placeholder*='/'], input[class*='date']"
+    )
+    for i in range(date_inputs.count()):
+        d_inp = date_inputs.nth(i)
+        if d_inp.is_visible():
+            try:
+                d_inp.click()
+                d_inp.fill(future_date)
+                d_inp.dispatch_event("input")
+                d_inp.dispatch_event("change")
+                page.keyboard.press("Escape")
+                print(f"  Auto-filled earliest joining date: {future_date}")
+            except Exception:
+                pass
+
+    # 4. Shift availability radio buttons ("Are you open to work in ... shift?")
+    shift_yes = modal.locator(
+        "label.radioInput:has(input[name='talent_shift_yes']), input[name='talent_shift_yes'], label:has-text('Yes')"
+    )
+    if shift_yes.count() > 0 and shift_yes.first.is_visible():
+        try:
+            shift_yes.first.click()
+            print("  Auto-selected 'Yes' for shift availability.")
+        except Exception:
+            pass
+
+    # 5. Generic screening answer fallback for any remaining text inputs
+    text_inputs = modal.locator(
+        "input[type='text']:not([name='total_experience']):not(.date-input), textarea"
+    )
+    for i in range(text_inputs.count()):
+        inp = text_inputs.nth(i)
+        if inp.is_visible() and not inp.input_value():
+            lbl = inp.get_attribute("placeholder") or inp.get_attribute("name") or inp.get_attribute("id") or ""
+            ans = get_screening_answer(lbl, profile, job_title)
+            if ans:
+                inp.fill(ans)
+                print(f"  Auto-filled field '{lbl[:30]}': {ans[:30]}")
+
+    time.sleep(1)
+
+    # 6. Click Submit (Input submit or Button)
+    submit_btn = modal.locator(
+        "input[type='submit'][value*='Apply'], input.primaryBtn.cta, button:has-text('APPLY NOW'), button:has-text('Apply Now'), button[type='submit']"
+    ).first
+    if submit_btn.is_visible():
+        print("  Clicking Submit (Apply Now)...")
+        submit_btn.click()
+        time.sleep(3)
+        page.keyboard.press("Escape")
+        time.sleep(0.5)
+        close_btn = modal.locator(".modalCloseBtn, button[aria-label*='Close'], button[aria-label*='close']").first
+        if close_btn.is_visible():
+            close_btn.click()
+        return True
+    return False
+
+
 def run(limit: int | None = None):
     profile = Profile.load()
     if not Path(SESSION_FILE).exists():
@@ -129,27 +226,31 @@ def run(limit: int | None = None):
             text = card.inner_text()
             stats_tracker.record_discovered()
             
+            lines = [l.strip() for l in text.splitlines() if l.strip()]
+            card_title = lines[0] if lines else "Uplers Opportunity"
+            card_company = lines[1] if len(lines) > 1 else "Uplers"
+
             # Simple keyword matching for title since text block contains it all
-            title = ""
+            matched = False
             for role in profile.target_roles:
                 req_keywords = profile.role_required_keywords.get(role, [])
                 if req_keywords:
                     if any(k.lower() in text.lower() for k in req_keywords):
-                        title = f"Matching Job ({role})"
+                        matched = True
                         break
                 else:
                     words = [w.lower() for w in role.split() if len(w) > 2]
                     if any(w in text.lower() for w in words):
-                        title = f"Matching Job ({role})"
+                        matched = True
                         break
                     
-            if not title:
+            if not matched:
                 print(f"Skipped: (Title doesn't match required keywords)")
                 continue
 
-            if _job_key(title, "uplers") in applied_keys or _job_key(title, "Unknown") in applied_keys:
+            if _job_key(card_title, card_company) in applied_keys or _job_key(card_title, "uplers") in applied_keys:
                 stats_tracker.record_previously_applied_skipped()
-                print(f"Skipped: {title} — already applied in an earlier run")
+                print(f"Skipped: {card_title} @ {card_company} — already applied in an earlier run")
                 continue
 
             if text and profile.job_freshness_days:
@@ -165,7 +266,7 @@ def run(limit: int | None = None):
                     elif "day" in text_lower:
                         age_days = num if num else 1
                     if age_days > profile.job_freshness_days:
-                        print(f"Skipped: {title} (Job is too old)")
+                        print(f"Skipped: {card_title} (Job is too old)")
                         continue
                 
             # Click the card to open right pane
@@ -176,13 +277,11 @@ def run(limit: int | None = None):
                 continue
                 
             # Check for Apply button in right pane
-            apply_btn = page.locator(".jobDetailSection button:has-text('Apply'), .jobDetailSection button:has-text('Apply Now')").filter(has_text=re.compile(r"^Apply( Now)?$", re.I))
+            apply_btn = page.locator(".jobDetailSection button:has-text('Apply'), .jobDetailSection button:has-text('Apply Now'), button.applyBtn").filter(has_text=re.compile(r"^Apply( Now)?$", re.I))
             
-            # If not found with class restriction, try globally but only visible ones
             if apply_btn.count() == 0:
-                apply_btn = page.locator("button:has-text('Apply'), button:has-text('Apply Now')").filter(has_text=re.compile(r"^Apply( Now)?$", re.I))
+                apply_btn = page.locator("button:has-text('Apply'), button:has-text('Apply Now'), button.applyBtn").filter(has_text=re.compile(r"^Apply( Now)?$", re.I))
             
-            # Find the first visible one
             visible_btn = None
             for i in range(apply_btn.count()):
                 if apply_btn.nth(i).is_visible():
@@ -193,79 +292,15 @@ def run(limit: int | None = None):
                 print("  Found Apply button! Clicking...")
                 try:
                     visible_btn.click(timeout=5000)
+                    time.sleep(2)
                     
-                    # Wait for Uplers modal to appear
-                    try:
-                        modal_btn = page.locator("button:has-text('APPLY NOW'), button:has-text('Apply Now')").last
-                        modal_btn.wait_for(state="visible", timeout=5000)
-                        
-                        print("  Detected screening modal! Auto-filling...")
-                        from common.human_input import ask_user
-                        import common.llm as llm
-                        
-                        # 1. Fill empty text inputs (like Full name, CTC, Location)
-                        # We find all inputs inside the dialog
-                        dialog = page.locator("div[role='dialog']").first
-                        if not dialog.is_visible():
-                            dialog = page
-                            
-                        from common.answers import get_screening_answer
-                        texts = dialog.locator("input[type='text'], input:not([type]), textarea")
-                        for i in range(texts.count()):
-                            inp = texts.nth(i)
-                            if inp.is_visible() and not inp.input_value():
-                                try:
-                                    lbl = inp.locator("xpath=../../preceding-sibling::label | ../preceding-sibling::label | preceding-sibling::label").first.inner_text()
-                                except:
-                                    lbl = inp.get_attribute("placeholder") or ""
-                                    
-                                if not lbl and "name" in (inp.get_attribute("name") or "").lower():
-                                    lbl = "Full Name"
-                                    
-                                ans = get_screening_answer(lbl or "Question", profile, f"{title} at {company}")
-                                if ans:
-                                    inp.fill(ans)
-                                    time.sleep(0.5)
-                                    print(f"  Auto-filled field '{lbl[:30]}': {ans[:30]}")
-                        
-                        # 2. Handle Radio Buttons (like "Are you open to work...")
-                        radios = dialog.locator("input[type='radio']")
-                        if radios.count() > 0:
-                            yes_labels = dialog.locator("label").filter(has_text=re.compile(r"^Yes$", re.I))
-                            if yes_labels.count() > 0:
-                                yes_labels.first.click()
-                                print("  Auto-selected 'Yes' for radio questions.")
-                        
-                        # 3. Check for errors
-                        time.sleep(2)
-                        errors = dialog.locator(".error, [class*='error'], [class*='Error']")
-                        if errors.count() > 0 and errors.first.is_visible():
-                            print("  Uplers form has missing dropdowns or errors.")
-                            ask_user("Please select them manually in the browser, then press Enter here.")
-                        
-                        print("  Clicking APPLY NOW inside modal...")
-                        modal_btn.click()
-                        time.sleep(3)
-                        
-                        # Close the modal on top right
-                        print("  Closing modal...")
-                        page.keyboard.press("Escape")
-                        time.sleep(1)
-                        # Also try clicking close button if escape didn't work
-                        close_btn = page.locator("button[aria-label*='lose'], svg[data-testid='CloseIcon']").first
-                        if close_btn.is_visible():
-                            close_btn.click()
-                        
-                    except Exception as e:
-                        # Timeout or other error, meaning no modal appeared or it was already handled
-                        pass
+                    fill_uplers_modal(page, profile, card_title)
                         
                     # Log success
                     applied += 1
-                    applied_keys.add(_job_key(title, "uplers"))
-                    applied_keys.add(_job_key(title, "Unknown"))
-                    log_row([datetime.now().isoformat(), "uplers", title, "Unknown", "applied", "success"])
-                    print(f"Applied: {title} ({applied} total this run)")
+                    applied_keys.add(_job_key(card_title, card_company))
+                    log_row([datetime.now().isoformat(), "uplers", card_title, card_company, "applied", "success"])
+                    print(f"Applied: {card_title} @ {card_company} ({applied} total this run)")
                     time.sleep(profile.min_delay_seconds_between_applications)
                     
                 except Exception as e:

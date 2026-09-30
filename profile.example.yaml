@@ -25,6 +25,7 @@ role_required_keywords:
 current_city: "Bengaluru"
 relocate_cities: []          # e.g. ["Hyderabad", "Pune"] -- leave empty if you won't relocate
 work_mode: "onsite_or_hybrid"   # onsite_or_hybrid | remote_only | flexible
+remote_locations: []         # e.g. ["Worldwide", "Remote", "United States", "European Union", "India"] (defaults to worldwide tech hubs if empty when work_mode is remote_only)
 night_shift_ok: false
 weekend_ok: false
 
@@ -60,7 +61,9 @@ company_include_only: []     # leave empty to not restrict
 
 seniority_floor_years: 0
 seniority_ceiling_years: 5
-job_freshness_days: 1          # Naukri's "freshness" filter -- only jobs posted in the last N days
+job_freshness_days: 1          # only jobs posted in the last N days
+under_10_applicants_only: true # strictly target early postings with under 10 applicants to maximize shortlisting
+max_applicants: 10             # maximum applicant threshold allowed before skipping
 
 salary_floor_lpa: null
 

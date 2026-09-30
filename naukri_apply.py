@@ -188,12 +188,19 @@ def passes_filters(card: dict, profile: Profile, role: str) -> tuple[bool, str]:
             return False, "not in include-only list"
 
     location_lower = location.lower() if location else ""
-    remote_markers = ("remote", "work from home", "wfh")
+    remote_markers = (
+        "remote", "work from home", "wfh", "anywhere", "telecommute",
+        "virtual", "home-based", "worldwide", "work from anywhere", "pan india"
+    )
     is_remote = any(marker in location_lower for marker in remote_markers)
     is_hybrid = "hybrid" in location_lower
 
-    if profile.work_mode == "remote_only" and not is_remote:
-        return False, f"not a remote job ({card.get('location')})"
+    if profile.work_mode == "remote_only":
+        if not is_remote:
+            return False, f"not a remote job ({card.get('location')})"
+        if is_hybrid and not any(m in location_lower for m in ("permanent remote", "100% remote", "fully remote")):
+            if any(w in location_lower for w in ("days in office", "days a week", "days/week", "onsite", "on-site")):
+                return False, f"hybrid job requires office presence ({card.get('location')})"
 
     if not is_remote:
         # Must match an allowed city
@@ -257,6 +264,14 @@ def passes_filters(card: dict, profile: Profile, role: str) -> tuple[bool, str]:
         if age_days > profile.job_freshness_days:
             return False, f"job posting is too old ({card.get('posted')})"
 
+    max_applicants = profile.data.get("max_applicants", 10 if profile.data.get("under_10_applicants_only") else None)
+    if max_applicants is not None:
+        app_text = (card.get("applicants") or "").lower()
+        if app_text:
+            nums = [int(s) for s in re.findall(r"\d+", app_text)]
+            if nums and nums[0] > max_applicants:
+                return False, f"too many applicants ({nums[0]} > {max_applicants})"
+
     return True, ""
 
 
@@ -290,6 +305,7 @@ def enumerate_cards(page):
             location: c.querySelector('.locWdth')?.innerText,
             salary: c.querySelector('.sal, .salary, .salaryWdth, [class*="salary"]')?.innerText,
             posted: c.querySelector('.job-post-day, [class*="post-day"], .type, .sub-type')?.innerText,
+            applicants: c.querySelector('.apply-count, [class*="applicant"], [class*="applied"], [class*="apply-status"]')?.innerText,
           }))
           .filter(c => c.title && c.href)
     """, default=[]) or []
@@ -896,6 +912,49 @@ def _fill_freetext(page, text: str):
     """, arg=text)
 
 
+def build_naukri_search_url(role: str, page_no: int, profile: Profile) -> str:
+    slug = role.lower().replace(" ", "-").replace("/", "-")
+    exp_param = int(profile.total_experience_years)
+    page_suffix = "" if page_no == 1 else f"-{page_no}"
+
+    import urllib.parse
+    params = []
+    if profile.work_mode == "remote_only":
+        base_path = f"{slug}-remote-jobs"
+        params.extend([
+            ("experience", str(exp_param)),
+            ("sort", "f"),
+            ("wfhType", "0"),
+            ("wfhType", "2"),
+        ])
+    else:
+        allowed_locations = []
+        if profile.work_mode in ("hybrid", "any", "flexible"):
+            allowed_locations.append("remote")
+        if profile.current_city:
+            allowed_locations.append(profile.current_city)
+        allowed_locations.extend(profile.relocate_cities)
+
+        seen = set()
+        deduped_locations = [
+            loc.lower()
+            for loc in allowed_locations
+            if loc and loc.lower() not in seen and not seen.add(loc.lower())
+        ]
+        loc_slug = "-".join(deduped_locations).replace(" ", "-")
+        base_path = f"{slug}-jobs-in-{loc_slug}" if loc_slug else f"{slug}-jobs"
+        params.extend([
+            ("experience", str(exp_param)),
+            ("sort", "f"),
+        ])
+
+    if getattr(profile, "job_freshness_days", None):
+        params.append(("jobAge", str(profile.job_freshness_days)))
+
+    query = urllib.parse.urlencode(params)
+    return f"https://www.naukri.com/{base_path}{page_suffix}?{query}"
+
+
 def run(preview: bool = False, limit: int | None = None):
     profile = Profile.load()
     if not Path(SESSION_FILE).exists():
@@ -938,8 +997,6 @@ def run(preview: bool = False, limit: int | None = None):
             if applied >= run_success_limit or attempted >= max_attempts:
                 break
 
-            slug = role.lower().replace(" ", "-")
-            exp_param = int(profile.total_experience_years)
             seen_job_ids = set()
             stopped_entirely = False
 
@@ -947,30 +1004,7 @@ def run(preview: bool = False, limit: int | None = None):
                 if applied >= run_success_limit or attempted >= max_attempts:
                     break
 
-                # Build location slug
-                # Build location slug prioritizing remote, then current city, then relocate cities
-                allowed_locations = []
-                if profile.work_mode in ("remote_only", "hybrid", "any", "flexible"):
-                    allowed_locations.append("remote")
-                if profile.current_city:
-                    allowed_locations.append(profile.current_city)
-                allowed_locations.extend(profile.relocate_cities)
-                
-                # Deduplicate and format
-                seen = set()
-                deduped_locations = [loc.lower() for loc in allowed_locations if loc and loc.lower() not in seen and not seen.add(loc.lower())]
-                loc_slug = "-".join(deduped_locations).replace(" ", "-")
-                
-                base_path = f"{slug}-jobs-in-{loc_slug}" if loc_slug else f"{slug}-jobs"
-                page_suffix = "" if page_no == 1 else f"-{page_no}"
-                
-                url = (
-                    f"https://www.naukri.com/{base_path}{page_suffix}"
-                    f"?experience={exp_param}"
-                    f"&sort=f"
-                )
-                if profile.job_freshness_days:
-                    url += f"&jobAge={profile.job_freshness_days}"
+                url = build_naukri_search_url(role, page_no, profile)
                 print(f"\n--- Searching: {role}, page {page_no} ({url}) ---")
                 try:
                     page.goto(url)
