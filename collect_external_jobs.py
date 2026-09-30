@@ -145,6 +145,70 @@ def collect_linkedin_external_jobs(page, profile: Profile) -> int:
                 except Exception:
                     continue
 
+def collect_foundit_external_jobs(page, profile: Profile) -> int:
+    print("\n--- Scanning Foundit for External Jobs (Age <= 7 days, Exp <= 4 yrs) ---")
+    added = 0
+    import urllib.parse
+    loc_tokens = [profile.current_city] + [c for c in profile.relocate_cities if c]
+    loc_query = ",".join(loc_tokens) if loc_tokens else ""
+
+    for role in profile.target_roles:
+        encoded_query = urllib.parse.quote_plus(role)
+        encoded_loc = urllib.parse.quote_plus(loc_query) if loc_query else ""
+
+        for page_no in range(1, int(profile.max_pages_per_role) + 1):
+            start_index = (page_no - 1) * 15
+            search_url = f"https://www.foundit.in/srp/results?query={encoded_query}"
+            if encoded_loc:
+                search_url += f"&locations={encoded_loc}"
+            if start_index > 0:
+                search_url += f"&start={start_index}"
+
+            print(f"Scanning Foundit: {role} (page {page_no})...")
+            try:
+                page.goto(search_url, wait_until="domcontentloaded", timeout=20000)
+                time.sleep(3)
+            except Exception:
+                break
+
+            card_locators = page.locator(".srpResultCardContainer .cardContainer, [class*='cardContainer']").all()
+            if not card_locators:
+                break
+
+            for card in card_locators:
+                try:
+                    title_el = card.locator(".jobTitle, #jobCardTitle, [class*='jobTitle']").first
+                    comp_el = card.locator(".companyName, [class*='companyName']").first
+                    exp_el = card.locator(".experienceSalary .details, .iconContainer + .details").first
+                    loc_el = card.locator(".location, .details.location").first
+                    
+                    title = title_el.inner_text().strip() if title_el.count() > 0 else ""
+                    company = comp_el.inner_text().strip() if comp_el.count() > 0 else "Unknown"
+                    exp_text = exp_el.inner_text().strip() if exp_el.count() > 0 else ""
+                    loc_text = loc_el.inner_text().strip() if loc_el.count() > 0 else ""
+                    card_text = card.inner_text().strip()
+
+                    if not title:
+                        continue
+
+                    card.scroll_into_view_if_needed()
+                    card.click()
+                    time.sleep(1.5)
+
+                    apply_btn = page.locator("#applyNowBtn, button:has-text('Apply Now'), button:has-text('Apply'), a:has-text('Apply')")
+                    for b_i in range(apply_btn.count()):
+                        btn = apply_btn.nth(b_i)
+                        if btn.is_visible():
+                            btn_text = btn.inner_text().strip().lower()
+                            if "company site" in btn_text or "company website" in btn_text or "external" in btn_text:
+                                ext_url = page.url
+                                if log_external_job("foundit", title, company, search_url, ext_url, loc_text, exp_text, "Recent"):
+                                    added += 1
+                                    print(f"  [+] Logged External Job: {title} @ {company} -> {ext_url}")
+                            break
+                except Exception:
+                    continue
+
     return added
 
 
@@ -158,7 +222,10 @@ def main():
 
     total_added = 0
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"]
+        )
         
         # 1. Naukri scanning
         naukri_session = "session_naukri.json"
@@ -177,6 +244,18 @@ def main():
             page = context.new_page()
             total_added += collect_linkedin_external_jobs(page, profile)
             context.close()
+
+        # 3. Foundit scanning
+        foundit_session = "session_foundit.json"
+        if Path(foundit_session).exists():
+            context = browser.new_context(storage_state=foundit_session)
+        else:
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            )
+        page = context.new_page()
+        total_added += collect_foundit_external_jobs(page, profile)
+        context.close()
 
         browser.close()
 

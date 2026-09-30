@@ -1,115 +1,181 @@
-# Naukri Automation — shareable edition
+# Multi-Platform Daily Job Application Pipeline
 
-Search Naukri jobs using your own profile and browser session, preview matching listings, and optionally submit applications within configured limits. Runs as a normal Python project; no particular AI editor is required.
+An automated, intelligent daily job application pipeline that searches, matches, auto-fills screening questionnaires via AI, and applies across **Naukri**, **LinkedIn**, **Hirist**, **Foundit** (Monster), **Uplers**, and **Instahyre**.
 
-**Download:** [Complete PDF guide](output/pdf/Naukri_Automation_Complete_Guide.pdf) - setup, usage, troubleshooting, and all 10 AI prompts.
+Designed to run **once every morning** as an autonomous daily workflow with persistent duplicate prevention and an actionable external application queue.
 
-**Start here:** [complete user guide](docs/USER_GUIDE.md) · [copy-and-paste AI prompts](docs/AI_PROMPTS.md) · [test results and limitations](docs/VALIDATION.md).
+---
 
-## Requirements
+## Key Features & Architecture
 
-- Python 3.10+ and a desktop terminal on macOS, Windows, or Linux supported by [Playwright](https://playwright.dev/python/docs/intro).
-- Your own Naukri account, manual login, and a local resume.
-- Optional Gemini or Groq API key for free-text drafting. Without a key, unsupported questions request terminal input. Groq and Grok are different products.
-- Internet access for installation and live use. Keep a terminal available for screening questions.
-
-Automation can trigger platform restrictions. Review the platform's current terms before using it. Stop on login challenges, CAPTCHA, or access restrictions; this project does not bypass them.
-
-## Get the code
-
-```bash
-git clone https://github.com/alamuruharsha24/naukri-automation.git
-cd naukri-automation
+```
+                                      DAILY MORNING RUN
+                                 (python daily_pipeline.py)
+                                              │
+                    ┌─────────────────────────┴─────────────────────────┐
+                    ▼                                                   ▼
+       applications_log.csv                                    external_jobs.csv
+    (Permanent Application History)                       (Today's Working Manual Queue)
+    • Never reset across days                             • Reset to 0 rows at start of every run
+    • Stores all successful submissions                   • Incrementally populated during run
+    • Blocks reapplying to same jobs                      • ONLY external ATS/careers links
+    • Tracks historical counts                            • No duplicates / No applied jobs
 ```
 
-Or download the ZIP from the repository’s **Code → Download ZIP** menu.
+### 1. 6-in-1 Platform Support
+* **Naukri**: Searches fresh jobs, applies directly, handles multi-turn chatbot screening drawers, and extracts external links.
+* **LinkedIn**: Scans Easy Apply postings, navigates multi-step modals (`Contact Info` ➔ `Screening Questions` ➔ `Review` ➔ `Submit`), and collects external ATS openings.
+* **Hirist.tech**: Evaluates fresh tech openings, navigates `/screening` questionnaires, auto-selects radio choices, and logs company careers links.
+* **Foundit (Monster)**: Searches targeted keyword/role queries, evaluates experience and freshness filters, handles Quick Apply / Apply Now modals, and logs external careers links.
+* **Uplers**: Evaluates opportunities in the talent dashboard, auto-fills application dialogs, and submits applications.
+* **Instahyre**: Searches matched tech roles & keywords on Instahyre candidate dashboard, auto-fills screening notes, and submits applications.
 
-## 1. Extract and install
+### 2. AI Screening & Form Auto-Fill (`common/answers.py`)
+* **Direct Candidate Facts**: Instantly fills known values (Full Name, Notice Period, Current/Expected CTC, Total Experience, City, Relocation).
+* **Groq AI Dynamic Answers**: Powered by `qwen/qwen3.8-27b` via Groq to dynamically answer technical screening questions, role fit, and experience summaries.
+* **Learned Memory**: Caches responses locally in `common/learned_answers.py` for consistent, fast answering.
+* **Sensitive Field Protection**: Halts and prompts the terminal for sensitive PII (PAN, Aadhaar, Passport, Bank details).
 
-Extract the shared ZIP and open a terminal in the extracted `naukri-automation` folder. Do not run inside the ZIP viewer.
+### 3. Isolated Persistent History vs. Daily Working CSV
+* **`applications_log.csv` (Permanent)**: Accumulates all successful submissions (`status == 'applied'`). Prevents reapplying to any job already applied on previous days.
+* **`external_jobs.csv` (Today's Queue)**: Automatically cleared to 0 rows at the start of every run. Only holds genuine external company ATS opportunities discovered during today's run.
 
-macOS / Linux:
+---
+
+## Setup & Prerequisites
+
+### 1. Installation
 
 ```bash
+# 1. Clone repository
+git clone git@github.com:ganesh-pkl/jobs-automation.git
+cd jobs-automation
+
+# 2. Setup Python environment
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m playwright install chromium
-python naukri.py init
+
+# 3. Install dependencies & Chromium
+pip install -r requirements.txt
+playwright install chromium
 ```
 
-Windows PowerShell:
+### 2. Configure Credentials & Profile
 
-```powershell
-py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m playwright install chromium
-.\.venv\Scripts\python.exe naukri.py init
-```
+1. **Environment Variables (`.env`)**:
+   ```env
+   GROQ_API_KEY=your_groq_api_key_here
+   GROQ_MODEL=qwen/qwen-2.5-32b-instruct
+   ```
 
-On Windows, replace `python` in the following commands with `.\.venv\Scripts\python.exe`. Activation is optional; no execution-policy change is necessary. On Linux, missing system libraries may require `python -m playwright install --with-deps chromium` with administrator access.
+2. **Candidate Profile (`profile.yaml`)**:
+   Edit `profile.yaml` with your actual professional facts, target roles, experience ceiling/floor, and job freshness window (e.g. `1` to `7` days).
 
-## 2. Configure your own profile
+3. **Capture Platform Logins**:
+   Run login capture for the platforms you want to automate:
+   ```bash
+   python login_capture.py naukri
+   python login_capture.py linkedin
+   python login_capture.py hirist
+   python login_capture.py foundit
+   python login_capture.py uplers
+   python login_capture.py instahyre
+   ```
+   Log into each platform in the opened browser, then press **Enter** in the terminal to save the session JSON.
 
-`init` creates `profile.yaml` and `.env` without overwriting existing files. Edit `profile.yaml` locally using the comments in `profile.example.yaml` and the [field reference](docs/USER_GUIDE.md#profile-field-reference).
+---
 
-Replace all example text, select roles and locations, enter real experience/salary/notice values, and set `resume_file_name` to your own file. Salary is in **lakhs per annum**, not rupees per month. Both CTC fields must be numbers; use zero only when truthful. Null example values deliberately prevent a real run.
+## Running the Automation
 
-For your first real run use `stop_after_n_applications: 1`, `stop_after_n_attempts: 1`, `max_pages_per_role: 1`, and `browser_mode: "visible"`.
+### Daily Morning Run (Recommended)
 
-Optional: enter `GEMINI_API_KEY` and/or `GROQ_API_KEY` in `.env`. Model names are configurable with `GEMINI_MODEL` / `GROQ_MODEL`. See the current [Gemini model catalog](https://ai.google.dev/gemini-api/docs/models) and [Groq model catalog](https://console.groq.com/docs/models) for availability. Pricing and quotas are provider controlled; this project does not promise free access.
-
-## 3. Log in, check, and preview
+Run the full 6-platform pipeline every morning with a single command:
 
 ```bash
-python naukri.py login
-python naukri.py doctor --browser-smoke
-python naukri.py preview
+python daily_pipeline.py
+```
+*or*
+```bash
+python run_all.py
 ```
 
-Log in manually in the browser, then press Enter in the terminal. The session is saved locally. Doctor validates local configuration, files, dependencies, and Chromium; it does not verify API credentials or live login validity. Preview opens Naukri search pages, shows MATCH/SKIP results, and never clicks Apply or writes the application log.
+### Running Individual Platforms
 
-## 4. Submit only when ready
+You can also run any platform independently:
 
 ```bash
-python naukri.py apply --confirm
+python hirist_apply.py      # Run Hirist automation
+python naukri_apply.py      # Run Naukri automation
+python linkedin_apply.py    # Run LinkedIn Easy Apply
+python foundit_apply.py     # Run Foundit automation
+python uplers_apply.py      # Run Uplers automation
+python instahyre_apply.py   # Run Instahyre automation
 ```
 
-This submits real applications. Watch the browser and answer terminal questions. Ctrl+C stops the process. Check any interrupted or uncertain application manually before retrying.
+---
 
-The example limits are five confirmed applications / seven attempts per run and eight confirmed applications per local calendar day, with 75–135 seconds between attempts. Limits count confirmed submissions in `applications_log.csv`; uncertain submissions may still have gone through. Run only one instance per project/account. Duplicate matching uses title + company and can also skip distinct openings sharing those values.
+## Daily Summary Report
 
-The older `python naukri_apply.py` command still immediately starts a real run for backward compatibility. Prefer the new command interface.
+At the end of every morning run, the pipeline prints a complete summary:
 
-## Use with Codex, Claude, Grok, or Antigravity
+```text
+=================================================================
+Date: 2026-09-29
 
-Open this folder in an assistant with local file/terminal access and ask it to read `AGENTS.md`, `README.md`, and `docs/AI_PROMPTS.md`. `CLAUDE.md` points to the same instructions. Any other assistant can follow those files when explicitly asked; automatic instruction discovery varies by product.
+Fresh jobs discovered: 95
+Previously applied jobs skipped: 18
+Duplicate jobs skipped: 7
 
-A chat-only assistant can explain commands and help edit redacted configuration, but cannot operate your local browser without execution tools. The runtime AI answer providers are Gemini/Groq; using a different coding assistant does not change them.
+Naukri:
+  Applied: 18
 
-## Test and share
+LinkedIn:
+  Applied: 8
+
+Hirist:
+  Applied: 12
+
+Foundit:
+  Applied: 10
+
+Uplers:
+  Applied: 4
+
+Instahyre:
+  Applied: 6
+
+Total successful applications today: 58
+
+Total successful applications historically: 146
+
+New external/manual jobs added to CSV: 16
+
+Total external jobs currently in CSV: 16
+=================================================================
+
+--- HIGH-MATCH EXTERNAL OPPORTUNITIES ADDED TODAY ---
+1. [LinkedIn] Senior Full Stack Developer @ Acme Corp (Hyderabad / Remote)
+   Skills: React.js, Node.js, REST APIs, System Design
+   Careers Link: https://boards.greenhouse.io/acmecorp/jobs/123456
+```
+
+---
+
+## Testing & Verification
+
+Run the test suite to verify question answering, candidate fact extraction, and safety rules:
 
 ```bash
 python -m unittest discover -s tests -v
-python scripts/package_share.py
 ```
 
-Share **only** `dist/naukri-automation-share.zip`. The builder includes an explicit list of source, template, test, and documentation files. It excludes `.git`, `.env`, `profile.yaml`, cookies, resumes, logs, screenshots, and virtual environments. Do not zip the entire working directory. Review changes to public templates before packaging; an allowlist cannot detect secrets someone manually adds to source.
+Run browser smoke validation:
+```bash
+python naukri.py doctor --browser-smoke
+```
 
-## Other scripts and limitations
-
-`linkedin_apply.py` is experimental and outside the main supported workflow. `naukri_refresh_resume.py` deletes and re-uploads a resume; a failed upload can leave no resume attached. It is a legacy utility, not part of setup, preview, or normal applying. Do not schedule either as part of first-time setup.
-
-AI-generated answers are not guaranteed factual. Only allowlisted professional profile fields are sent to the configured provider, together with question and title/company context. Common questions use profile rules; sensitive questions require fresh terminal input. Review your profile and remembered answers regularly.
-
-Selectors can break when Naukri changes its pages. Local tests and browser checks are documented in [VALIDATION.md](docs/VALIDATION.md); they do not prove live submissions work on every account or operating system.
+---
 
 ## License
 
-MIT. Original attribution is preserved in [LICENSE](LICENSE). No warranty.
-
-## Attribution
-
-Based on [Hemanth-kumar-N-arya/naukri-job-apply-ai](https://github.com/Hemanth-kumar-N-arya/naukri-job-apply-ai), with portability, setup validation, preview, tests, and sharing documentation added in this edition.
-
-To rebuild the PDF after editing the Markdown guides, install the optional `reportlab` package in a separate environment and run `python scripts/build_pdf_guide.py`. It is not needed to run the automation.
+MIT License.

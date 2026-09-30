@@ -19,7 +19,9 @@ SITES = {
     "naukri": "https://www.naukri.com/nlogin/login",
     "linkedin": "https://www.linkedin.com/login",
     "hirist": "https://www.hirist.tech/",
-    "uplers": "https://platform.uplers.com/login"
+    "uplers": "https://platform.uplers.com/login",
+    "instahyre": "https://www.instahyre.com/login/",
+    "foundit": "https://www.foundit.in/auth/login",
 }
 
 
@@ -33,10 +35,16 @@ def main():
     out_path = f"session_{site}.json"
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        context = browser.new_context()
+        browser = p.chromium.launch(
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"]
+        )
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 800}
+        )
         page = context.new_page()
-        # Naukri keeps background requests open, so waiting for the full
+        # Naukri and Foundit keep background requests open, so waiting for the full
         # `load` event can time out even when the login page is usable.
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
 

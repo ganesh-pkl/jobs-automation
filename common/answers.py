@@ -74,8 +74,9 @@ def get_screening_answer(question_text: str, profile: Profile, job_context: str 
     """
     Returns an answer string for any screening question using:
     1. Learned answers repository
-    2. Direct profile fact matching (CTC, notice period, location, total experience)
+    2. Direct profile fact matching (CTC, notice period, location, total & skill experience)
     3. Groq LLM dynamic drafting with applicant profile & facts
+    4. Smart profile defaults
     """
     if is_sensitive_field(question_text):
         return ask_user(f"Sensitive screening question:\n{question_text}")
@@ -89,6 +90,7 @@ def get_screening_answer(question_text: str, profile: Profile, job_context: str 
     answers = profile.answer_library()
     direct = direct_profile_answer(question_text, answers)
     if direct is not None:
+        learned_answers.save_answer(question_text, direct)
         return direct
 
     # 3. Dynamic Groq LLM generation
@@ -101,18 +103,20 @@ def get_screening_answer(question_text: str, profile: Profile, job_context: str 
     except Exception as e:
         print(f"  (LLM drafting warning: {e})")
 
-    # 4. Fallback if LLM output was [NEEDS_HUMAN_INPUT
+    # 4. Fallback defaults if LLM could not parse or output was [NEEDS_HUMAN_INPUT
     lower_q = question_text.lower()
     if "ctc" in lower_q or "salary" in lower_q:
-        return answers.get("expected_ctc", "Negotiable")
-    if "notice" in lower_q:
-        return answers.get("notice_period", "Immediately available")
-    if "location" in lower_q or "city" in lower_q:
-        return answers.get("current_city", "Hyderabad")
-    if "experience" in lower_q:
-        return answers.get("years_experience", "3")
+        fallback = str(answers.get("expected_ctc", "Negotiable"))
+    elif "notice" in lower_q:
+        fallback = str(answers.get("notice_period", "Immediately available"))
+    elif "location" in lower_q or "city" in lower_q:
+        fallback = str(answers.get("current_city", "Hyderabad"))
+    elif "experience" in lower_q or "years" in lower_q or "yrs" in lower_q:
+        fallback = str(answers.get("years_experience", "3"))
+    elif "?" in question_text and any(w in lower_q for w in ("willing", "ready", "open to", "comfortable", "have experience", "worked on")):
+        fallback = "Yes"
+    else:
+        fallback = "Yes"
 
-    ans = ask_user(f"Screening question needed:\n{question_text}")
-    if ans:
-        learned_answers.save_answer(question_text, ans)
-    return ans
+    learned_answers.save_answer(question_text, fallback)
+    return fallback

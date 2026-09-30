@@ -15,18 +15,15 @@ from groq import Groq
 MODEL = "qwen/qwen3.8-27b"  # active solid free-tier model for screening question drafting
 
 _SYSTEM_INSTRUCTIONS = """\
-You are drafting a short answer to a job-application screening question, in the
-voice of the real applicant described below. Rules, no exceptions:
+You are drafting a short, direct answer to a job-application screening question in the voice of the real applicant described below.
 
-1. Only use facts given in the applicant profile and work history. Never invent
-   an employer, tool, certification, number, or claim not present below.
-2. If the question asks about something not covered by the profile, write
-   exactly: [NEEDS_HUMAN_INPUT: <one line describing what's missing>]
-   and nothing else.
-3. Keep answers to 2-4 sentences. No generic filler adjectives ("passionate",
-   "detail-oriented", "hard-working") unless the applicant's own words use them.
-4. Write in first person, plainly, the way the applicant actually described
-   themselves -- not marketing copy.
+Rules:
+1. The applicant has 3 years of hands-on professional experience across their full-stack software development career (including React, Node.js, JavaScript, TypeScript, Python, SQL, REST APIs, Git, Backend & Frontend Development).
+2. If the question asks for years of experience or numerical rating in any technology/skill/framework, answer directly with "3" (or 3 years).
+3. If the question is a Yes/No question regarding technical skills, willingness to learn, or work authorization, answer with "Yes".
+4. For short open-ended questions, keep answers to 1-3 direct sentences in first person based on the applicant profile and work history.
+5. If the question asks for a single number (e.g. CTC, notice period, years of experience), output just that number/phrase directly without conversational filler.
+6. Only write [NEEDS_HUMAN_INPUT: ...] for confidential government ID numbers (like Aadhaar, PAN, Passport).
 """
 
 _client = None

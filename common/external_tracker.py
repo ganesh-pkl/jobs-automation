@@ -169,25 +169,38 @@ def log_external_job(
 
     try:
         with path.open("a", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
-            if new_file:
-                writer.writeheader()
-            writer.writerow({
-                "Platform": platform.capitalize(),
-                "Job Title": clean_title,
-                "Company": clean_company,
-                "Location": _clean(location) or "Hyderabad / Remote",
-                "Experience Required": _clean(experience) or "1-4 Yrs",
-                "Job Description / Summary": summary,
-                "Job URL on original platform": orig_url,
-                "External Company Careers/Application URL": ext_url,
-                "Match Level": level,
-                "Match Reason": reason,
-                "Matching Skills": skills_str,
-                "Why it is relevant to my resume": relevance,
-                "Date Discovered": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "Manual Application Status": "pending_manual_submission",
-            })
+            try:
+                import fcntl
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            except Exception:
+                pass
+            try:
+                writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+                if new_file and f.tell() == 0:
+                    writer.writeheader()
+                writer.writerow({
+                    "Platform": platform.capitalize(),
+                    "Job Title": clean_title,
+                    "Company": clean_company,
+                    "Location": _clean(location) or "Hyderabad / Remote",
+                    "Experience Required": _clean(experience) or "1-4 Yrs",
+                    "Job Description / Summary": summary,
+                    "Job URL on original platform": orig_url,
+                    "External Company Careers/Application URL": ext_url,
+                    "Match Level": level,
+                    "Match Reason": reason,
+                    "Matching Skills": skills_str,
+                    "Why it is relevant to my resume": relevance,
+                    "Date Discovered": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Manual Application Status": "pending_manual_submission",
+                })
+                f.flush()
+            finally:
+                try:
+                    import fcntl
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                except Exception:
+                    pass
         return True
     except Exception as e:
         print(f"Failed to log external job to CSV: {e}")

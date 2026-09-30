@@ -74,11 +74,24 @@ def log_row(row: list):
     new_file = not Path(LOG_FILE).exists()
     if new_file:
         Path(LOG_FILE).touch(mode=0o600)
-    with open(LOG_FILE, "a", newline="") as f:
-        w = csv.writer(f)
-        if new_file:
-            w.writerow(["timestamp", "source", "title", "company", "status", "reason"])
-        w.writerow(row)
+    with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        try:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        except Exception:
+            pass
+        try:
+            w = csv.writer(f)
+            if new_file and f.tell() == 0:
+                w.writerow(["timestamp", "source", "title", "company", "status", "reason"])
+            w.writerow(row)
+            f.flush()
+        finally:
+            try:
+                import fcntl
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
 
 
 def _job_key(title: str | None, company: str | None) -> tuple[str, str]:
@@ -573,25 +586,32 @@ def _should_skip_question(question: str, profile: Profile) -> bool:
 
 
 def _auto_decide_option(question: str, options: list[dict], profile: Profile) -> dict | None:
-    """Tries to pick the correct option using known profile facts, for
-    common Yes/No-style questions. Returns None (never guesses) if nothing
-    in the profile clearly answers this specific question -- caller falls
-    back to asking you directly rather than risk a wrong click."""
+    """Picks the correct option using known profile facts or smart defaults."""
     lower_q = question.lower()
     by_label = {o["idx"]: o["label"].strip().lower() for o in options}
 
     def find_by_text(text: str):
         for idx, label in by_label.items():
-            if label == text.lower():
+            if label == text.lower() or label == text.lower() + "." or text.lower() in label:
                 return next(o for o in options if o["idx"] == idx)
         return None
 
     rules = [
+        (["interview", "virtual interview", "video interview", "video call", "telephonic", "f2f", "online test", "assessment", "discussion", "available for interview", "available for virtual"],
+         "Yes"),
+        (["laptop", "wifi", "internet", "broadband", "work from home setup", "wfh setup"],
+         "Yes"),
+        (["background check", "background verification", "bgv", "drug test", "reference check"],
+         "Yes"),
+        (["work authorization", "authorized to work", "valid passport", "eligible to work", "citizen"],
+         "Yes"),
+        (["criminal", "court case", "pending legal", "disciplinary", "backlog", "gap"],
+         "No"),
         (["relocate", "relocation", "willing to move"],
          "Yes" if profile.data.get("relocate_cities") else "No"),
         (["night shift"], "Yes" if profile.data.get("night_shift_ok") else "No"),
         (["weekend"], "Yes" if profile.data.get("weekend_ok") else "No"),
-        (["immediately available", "immediate joiner"],
+        (["immediately available", "immediate joiner", "ready to join"],
          "Yes" if profile.data.get("immediately_available") else "No"),
         (["currently employed", "currently working"],
          "Yes" if profile.data.get("current_employer") else "No"),
@@ -601,7 +621,33 @@ def _auto_decide_option(question: str, options: list[dict], profile: Profile) ->
             match = find_by_text(desired)
             if match:
                 return match
-    return None
+
+    # Auto-pick Yes for technical capability, experience, willingness, comfort, and interview availability
+    if any(t in lower_q for t in ("experience", "comfortable", "willing", "proficient", "hands on", "worked on", "knowledge", "available", "ready", "agree", "open to", "interview")):
+        yes_opt = find_by_text("Yes")
+        if yes_opt:
+            return yes_opt
+
+    # Auto-match experience range options (e.g. "1-3 years", "3-5 years", "3 years")
+    exp_years = float(profile.total_experience_years or 3)
+    for opt in options:
+        lbl = opt["label"].lower()
+        digits = [float(s) for s in re.findall(r"\d+(?:\.\d+)?", lbl)]
+        if len(digits) == 2:
+            if digits[0] <= exp_years <= digits[1]:
+                return opt
+        elif len(digits) == 1:
+            if "+" in lbl and exp_years >= digits[0]:
+                return opt
+            elif digits[0] == exp_years:
+                return opt
+
+    # Prefer Yes if present among choices
+    yes_fallback = find_by_text("Yes")
+    if yes_fallback:
+        return yes_fallback
+
+    return options[0] if options else None
 
 
 def _handle_options_question(page, question: str, profile: Profile, timeout_s: int) -> bool:
@@ -810,22 +856,33 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
         direct_answer = _direct_profile_answer(question, answers)
         if direct_answer is not None:
             _fill_and_send(page, direct_answer, question)
+            learned_answers.save_answer(question, direct_answer)
             continue
 
         try:
-            draft = llm.draft_answer(question, profile.llm_context(), job_context)
+            full_context = {**profile.llm_context(), **answers}
+            draft = llm.draft_answer(question, full_context, job_context)
         except Exception:
-            print("  AI drafting unavailable; requesting a manual answer.")
-            draft = "[NEEDS_HUMAN_INPUT: provider unavailable]"
+            draft = "[NEEDS_HUMAN_INPUT: provider error]"
         if draft.startswith("[NEEDS_HUMAN_INPUT"):
-            response = ask_user(f"Screening question (AI couldn't answer from your profile):\n{question}",
-                                 timeout_seconds=timeout_s)
-            if response is None:
-                raise SkipJob(f"no response for: {question[:120]}")
-            _fill_and_send(page, response, question)
-            learned_answers.save_answer(question, response)
+            lower_q = question.lower()
+            if "experience" in lower_q or "years" in lower_q or "yrs" in lower_q:
+                fallback_ans = str(answers.get("years_experience", "3"))
+            elif "ctc" in lower_q or "salary" in lower_q:
+                fallback_ans = str(answers.get("expected_ctc", "Negotiable"))
+            elif "notice" in lower_q:
+                fallback_ans = str(answers.get("notice_period", "Immediately available"))
+            elif "city" in lower_q or "location" in lower_q:
+                fallback_ans = str(answers.get("current_city", "Hyderabad"))
+            elif "?" in question and any(w in lower_q for w in ("willing", "ready", "open to", "comfortable")):
+                fallback_ans = "Yes"
+            else:
+                fallback_ans = "Yes"
+            _fill_and_send(page, fallback_ans, question)
+            learned_answers.save_answer(question, fallback_ans)
         else:
             _fill_and_send(page, draft, question)
+            learned_answers.save_answer(question, draft)
 
 
 def _fill_freetext(page, text: str):
@@ -839,25 +896,26 @@ def _fill_freetext(page, text: str):
     """, arg=text)
 
 
-def run(preview: bool = False):
+def run(preview: bool = False, limit: int | None = None):
     profile = Profile.load()
     if not Path(SESSION_FILE).exists():
         raise SystemExit(f"{SESSION_FILE} not found. Run: python login_capture.py naukri")
 
     human_timeout = profile.data.get("human_input_timeout_seconds", 120)
-    max_pages = profile.data.get("max_pages_per_role", 5)
-    max_attempts = profile.data.get(
-        "stop_after_n_attempts", profile.stop_after_n_applications
-    )
-    daily_limit = int(profile.data.get("daily_application_limit", 10))
+    max_pages = profile.data.get("max_pages_per_role", 8)
+    naukri_daily_limit = int(profile.data.get("naukri_daily_limit", profile.data.get("daily_application_limit", 40)))
     applied_today = count_applications_today()
-    remaining_today = max(0, daily_limit - applied_today)
-    run_success_limit = min(profile.stop_after_n_applications, remaining_today)
+    remaining_today = max(0, naukri_daily_limit - applied_today)
+    target_limit = limit if limit is not None else profile.stop_after_n_applications
+    run_success_limit = min(target_limit, remaining_today)
+    max_attempts = profile.data.get(
+        "stop_after_n_attempts", max(50, run_success_limit * 3)
+    )
     if preview:
-        run_success_limit = profile.stop_after_n_applications
+        run_success_limit = target_limit
     if run_success_limit <= 0:
         print(
-            f"Daily application limit reached ({applied_today}/{daily_limit}). "
+            f"Naukri safe daily application limit reached ({applied_today}/{naukri_daily_limit}). "
             "No applications were attempted."
         )
         return

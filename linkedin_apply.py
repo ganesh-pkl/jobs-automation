@@ -34,11 +34,24 @@ def log_row(row: list):
     new_file = not Path(LOG_FILE).exists()
     if new_file:
         Path(LOG_FILE).touch(mode=0o600)
-    with open(LOG_FILE, "a", newline="") as f:
-        w = csv.writer(f)
-        if new_file:
-            w.writerow(["timestamp", "source", "title", "company", "status", "reason"])
-        w.writerow(row)
+    with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        try:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        except Exception:
+            pass
+        try:
+            w = csv.writer(f)
+            if new_file and f.tell() == 0:
+                w.writerow(["timestamp", "source", "title", "company", "status", "reason"])
+            w.writerow(row)
+            f.flush()
+        finally:
+            try:
+                import fcntl
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
 
 
 def _job_key(title: str | None, company: str | None) -> tuple[str, str]:
@@ -62,6 +75,28 @@ def load_applied_job_keys(path: str = LOG_FILE) -> set[tuple[str, str]]:
     except (OSError, csv.Error):
         return set()
 
+def count_applications_today(path: str = LOG_FILE, today=None) -> int:
+    log_path = Path(path)
+    if not log_path.exists():
+        return 0
+    if today is None:
+        today = datetime.now().date()
+    count = 0
+    try:
+        with log_path.open(newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                src = (row.get("source") or row.get("platform") or "").lower()
+                if src == "linkedin" and row.get("status") == "applied":
+                    ts_str = row.get("timestamp") or ""
+                    try:
+                        row_date = datetime.fromisoformat(ts_str.replace(" ", "T")).date()
+                    except Exception:
+                        row_date = today
+                    if row_date == today:
+                        count += 1
+    except (OSError, csv.Error):
+        pass
+    return count
 
 
 def page_has_stop_signal(page) -> str | None:
@@ -216,64 +251,113 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
     raise RuntimeError("exceeded step cap without reaching submit")
 
 
-def run():
+def run(limit: int | None = None):
     profile = Profile.load()
     if not Path(SESSION_FILE).exists():
         raise SystemExit(f"{SESSION_FILE} not found. Run: python login_capture.py linkedin")
 
+    linkedin_daily_limit = int(profile.data.get("linkedin_daily_limit", 15))
+    applied_today = count_applications_today()
+    remaining_today = max(0, linkedin_daily_limit - applied_today)
+    target_limit = limit if limit is not None else profile.stop_after_n_applications
+    run_success_limit = min(target_limit, remaining_today)
+
+    if run_success_limit <= 0:
+        print(f"LinkedIn safe daily application limit reached ({applied_today}/{linkedin_daily_limit}). Stopping.")
+        return
+
     applied = 0
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, slow_mo=200)
+        browser = p.chromium.launch(headless=profile.browser_mode == "headless", slow_mo=200)
         context = browser.new_context(storage_state=SESSION_FILE)
         page = context.new_page()
 
         locations = list(dict.fromkeys([profile.current_city, *profile.relocate_cities, "Remote"]))
         freshness_seconds = int(profile.job_freshness_days) * 86400 if hasattr(profile, "job_freshness_days") else 604800
+        max_search_pages = int(profile.data.get("max_linkedin_pages", 3))
+
         for role in profile.target_roles:
             for loc in locations:
-                if not loc:
-                    continue
-                if applied >= profile.stop_after_n_applications:
+                if not loc or applied >= run_success_limit:
                     break
-                search_url = (
-                    "https://www.linkedin.com/jobs/search/?keywords="
-                    + role.replace(" ", "%20")
-                    + "&location=" + loc.replace(" ", "%20")
-                    + "&f_AL=true"  # Easy Apply filter
-                    + f"&f_TPR=r{freshness_seconds}" # Based on job freshness days
-                )
-                print(f"\n--- Searching LinkedIn: {role} ({loc}) ---")
-                try:
-                    page.goto(search_url, timeout=20000)
-                    page.wait_for_selector('.job-card-container, [data-job-id], .jobs-search-results-list, .scaffold-layout__list', timeout=10000)
-                except PWTimeout:
-                    pass
-                except Exception as e:
-                    print(f"  (navigation timeout or error: {e})")
-                time.sleep(3)
 
-                stop = page_has_stop_signal(page)
-                if stop:
-                    print(f"STOPPING: {stop}")
-                    log_row([datetime.now(), "linkedin", "-", "-", "stopped", stop])
-                    browser.close()
-                    return
+                for page_idx in range(max_search_pages):
+                    if applied >= run_success_limit:
+                        break
+                    start_offset = page_idx * 25
+                    search_url = (
+                        "https://www.linkedin.com/jobs/search/?keywords="
+                        + role.replace(" ", "%20")
+                        + "&location=" + loc.replace(" ", "%20")
+                        + "&f_AL=true"  # Easy Apply filter
+                        + f"&f_TPR=r{freshness_seconds}" # Based on job freshness days
+                        + (f"&start={start_offset}" if start_offset > 0 else "")
+                    )
+                    print(f"\n--- Searching LinkedIn: {role} ({loc}) [Page {page_idx + 1}] ---")
+                    try:
+                        page.goto(search_url, timeout=20000)
+                        page.wait_for_selector('.job-card-container, [data-job-id], .jobs-search-results-list, .scaffold-layout__list', timeout=10000)
+                    except PWTimeout:
+                        pass
+                    except Exception as e:
+                        print(f"  (navigation timeout or error: {e})")
+                    time.sleep(2)
 
-                cards = page.evaluate("""
-                    () => {
-                        const cards = [];
-                        const items = Array.from(document.querySelectorAll('li[data-occludable-job-id], .job-card-container, .jobs-search-results__list-item, .scaffold-layout__list-item, .jobs-search-results-list li, [data-job-id]'));
-                        if (items.length > 0) {
-                            items.forEach((c, idx) => {
-                                const titleEl = c.querySelector('a.job-card-list__title--link, [class*="job-card-list__title"], a.job-card-container__link, .job-card-list__title, a[data-control-id], strong, a[href*="/jobs/view/"]');
-                                let title = titleEl ? titleEl.innerText.trim() : "";
-                                if (!title && titleEl && titleEl.getAttribute("aria-label")) {
-                                    title = titleEl.getAttribute("aria-label").trim();
-                                }
-                                const href = titleEl ? titleEl.href : "";
-                                const compEl = c.querySelector('.artdeco-entity-lockup__subtitle, [class*="company-name"], [class*="primary-description"], .job-card-container__primary-description');
-                                const timeEl = c.querySelector('time, [class*="listed-time"], [class*="footer-item"]');
-                                if (title) {
+                    stop = page_has_stop_signal(page)
+                    if stop:
+                        print(f"STOPPING: {stop}")
+                        log_row([datetime.now(), "linkedin", "-", "-", "stopped", stop])
+                        browser.close()
+                        return
+
+                    # Scroll the list container so all lazy-loaded cards render
+                    try:
+                        for _ in range(4):
+                            page.evaluate("""() => {
+                                const list = document.querySelector('.jobs-search-results-list, .scaffold-layout__list, div.scaffold-layout__list-detail-inner');
+                                if (list) list.scrollBy(0, 1000);
+                                else window.scrollBy(0, 1000);
+                            }""")
+                            time.sleep(0.5)
+                    except Exception:
+                        pass
+
+                    cards = page.evaluate("""
+                        () => {
+                            const cards = [];
+                            const items = Array.from(document.querySelectorAll('li[data-occludable-job-id], .job-card-container, .jobs-search-results__list-item, .scaffold-layout__list-item, .jobs-search-results-list li, [data-job-id]'));
+                            if (items.length > 0) {
+                                items.forEach((c, idx) => {
+                                    const titleEl = c.querySelector('a.job-card-list__title--link, [class*="job-card-list__title"], a.job-card-container__link, .job-card-list__title, a[data-control-id], strong, a[href*="/jobs/view/"]');
+                                    let title = titleEl ? titleEl.innerText.trim() : "";
+                                    if (!title && titleEl && titleEl.getAttribute("aria-label")) {
+                                        title = titleEl.getAttribute("aria-label").trim();
+                                    }
+                                    const href = titleEl ? titleEl.href : "";
+                                    const compEl = c.querySelector('.artdeco-entity-lockup__subtitle, [class*="company-name"], [class*="primary-description"], .job-card-container__primary-description');
+                                    const timeEl = c.querySelector('time, [class*="listed-time"], [class*="footer-item"]');
+                                    if (title) {
+                                        cards.push({
+                                            idx: idx,
+                                            title: title,
+                                            href: href,
+                                            company: compEl ? compEl.innerText.trim() : "",
+                                            posted: timeEl ? timeEl.innerText.trim() : "",
+                                        });
+                                    }
+                                });
+                            }
+                            if (cards.length === 0) {
+                                const anchors = Array.from(document.querySelectorAll('a[href*="/jobs/view/"]'));
+                                const seen = new Set();
+                                anchors.forEach((a, idx) => {
+                                    const title = a.innerText.trim();
+                                    const href = a.href;
+                                    if (!title || seen.has(href)) return;
+                                    seen.add(href);
+                                    const parent = a.closest('li, [class*="card"], div.flex-grow-1, [data-job-id]') || a.parentElement;
+                                    const compEl = parent ? parent.querySelector('[class*="company"], [class*="subtitle"], [class*="primary-description"]') : null;
+                                    const timeEl = parent ? parent.querySelector('time, [class*="time"], [class*="footer"]') : null;
                                     cards.push({
                                         idx: idx,
                                         title: title,
@@ -281,102 +365,87 @@ def run():
                                         company: compEl ? compEl.innerText.trim() : "",
                                         posted: timeEl ? timeEl.innerText.trim() : "",
                                     });
-                                }
-                            });
-                        }
-                        if (cards.length === 0) {
-                            const anchors = Array.from(document.querySelectorAll('a[href*="/jobs/view/"]'));
-                            const seen = new Set();
-                            anchors.forEach((a, idx) => {
-                                const title = a.innerText.trim();
-                                const href = a.href;
-                                if (!title || seen.has(href)) return;
-                                seen.add(href);
-                                const parent = a.closest('li, [class*="card"], div.flex-grow-1, [data-job-id]') || a.parentElement;
-                                const compEl = parent ? parent.querySelector('[class*="company"], [class*="subtitle"], [class*="primary-description"]') : null;
-                                const timeEl = parent ? parent.querySelector('time, [class*="time"], [class*="footer"]') : null;
-                                cards.push({
-                                    idx: idx,
-                                    title: title,
-                                    href: href,
-                                    company: compEl ? compEl.innerText.trim() : "",
-                                    posted: timeEl ? timeEl.innerText.trim() : "",
                                 });
-                            });
+                            }
+                            return cards;
                         }
-                        return cards;
-                    }
-                """)
-                print(f"Found {len(cards)} cards on the page.")
-
-                applied_keys = load_applied_job_keys()
-                for card in cards:
-                    if applied >= profile.stop_after_n_applications:
+                    """)
+                    print(f"Found {len(cards)} cards on page {page_idx + 1}.")
+                    if len(cards) == 0:
                         break
-                    idx = card["idx"]
-                    title = card.get("title", "")
-                    company = card.get("company", "")
 
-                    stats_tracker.record_discovered()
-                    if _job_key(title, company) in applied_keys:
-                        stats_tracker.record_previously_applied_skipped()
-                        print(f"Skipped: {title} @ {company} — already applied in an earlier run")
-                        continue
-                    
-                    # Enforce strict title matching based on profile.yaml
-                    required_keywords = profile.data.get("role_required_keywords", {}).get(role)
-                    if required_keywords:
-                        if not any(k.lower() in title.lower() for k in required_keywords):
-                            print(f"Skipped: {title} @ {card.get('company')} (Title doesn't match {role} keywords)")
+                    applied_keys = load_applied_job_keys()
+                    for card in cards:
+                        if applied >= run_success_limit:
+                            break
+                        idx = card["idx"]
+                        title = card.get("title", "")
+                        company = card.get("company", "")
+
+                        stats_tracker.record_discovered()
+                        if _job_key(title, company) in applied_keys:
+                            stats_tracker.record_previously_applied_skipped()
+                            print(f"Skipped: {title} @ {company} — already applied in an earlier run")
                             continue
+                        
+                        # Enforce strict title matching based on profile.yaml
+                        required_keywords = profile.data.get("role_required_keywords", {}).get(role)
+                        if required_keywords:
+                            if not any(k.lower() in title.lower() for k in required_keywords):
+                                print(f"Skipped: {title} @ {card.get('company')} (Title doesn't match {role} keywords)")
+                                continue
 
-                    posted_text = (card.get("posted") or "").lower()
-                    if posted_text and profile.job_freshness_days:
-                        age_days = 0
-                        nums = [int(s) for s in posted_text.split() if s.isdigit()]
-                        num = nums[0] if nums else 0
-                        if "month" in posted_text:
-                            age_days = num * 30 if num else 30
-                        elif "week" in posted_text:
-                            age_days = num * 7 if num else 7
-                        elif "day" in posted_text:
-                            age_days = num if num else 1
+                        posted_text = (card.get("posted") or "").lower()
+                        if posted_text and profile.job_freshness_days:
+                            age_days = 0
+                            nums = [int(s) for s in posted_text.split() if s.isdigit()]
+                            num = nums[0] if nums else 0
+                            if "month" in posted_text:
+                                age_days = num * 30 if num else 30
+                            elif "week" in posted_text:
+                                age_days = num * 7 if num else 7
+                            elif "day" in posted_text:
+                                age_days = num if num else 1
 
-                        if age_days > profile.job_freshness_days:
-                            print(f"Skipped: {title} @ {card.get('company')} (Job is too old: {card.get('posted')})")
-                            continue
+                            if age_days > profile.job_freshness_days:
+                                print(f"Skipped: {title} @ {card.get('company')} (Job is too old: {card.get('posted')})")
+                                continue
 
-                    try:
-                        page.locator(".jobs-search-results__list-item, .scaffold-layout__list-item, .jobs-search-results-list li, .scaffold-layout__list li").nth(idx).click()
-                        time.sleep(1.5)
-                        success = run_one_application(page, profile, card.get("title", ""), card.get("company", ""))
-                        if success:
-                            applied += 1
+                        try:
+                            card_locator = page.locator(".jobs-search-results__list-item, .scaffold-layout__list-item, .jobs-search-results-list li, .scaffold-layout__list li").nth(idx)
+                            if card_locator.count() > 0 and card_locator.is_visible():
+                                card_locator.scroll_into_view_if_needed()
+                                card_locator.click()
+                                time.sleep(1.5)
+                                success = run_one_application(page, profile, card.get("title", ""), card.get("company", ""))
+                                if success:
+                                    applied += 1
+                                    applied_keys.add(_job_key(title, company))
+                                    log_row([datetime.now(), "linkedin", card.get("title"),
+                                              card.get("company"), "applied", ""])
+                                    print(f"Applied: {card.get('title')} @ {card.get('company')} ({applied} total this run)")
+                                    time.sleep(profile.min_delay_seconds_between_applications)
+                                else:
+                                    log_row([datetime.now(), "linkedin", card.get("title"),
+                                              card.get("company"), "skipped", "no Easy Apply button"])
+                                    from common.external_tracker import log_external_job
+                                    job_link = page.url
+                                    ext_link = page.evaluate("() => document.querySelector('.jobs-apply-button')?.href || ''")
+                                    log_external_job("linkedin", card.get("title") or "", card.get("company") or "", job_link or "", ext_link or "", loc, "", card.get("posted") or "")
+                                    print(f"Skipped (External Apply logged to CSV): {card.get('title')} @ {card.get('company')}")
+                                    time.sleep(2)
+                        except SubmissionUnconfirmed as e:
+                            print(f"UNCERTAIN: {card.get('title')} @ {card.get('company')} — {e}")
                             log_row([datetime.now(), "linkedin", card.get("title"),
-                                      card.get("company"), "applied", ""])
-                            print(f"Applied: {card.get('title')} @ {card.get('company')} ({applied} total)")
+                                      card.get("company"), "uncertain", str(e)])
                             time.sleep(profile.min_delay_seconds_between_applications)
-                        else:
+                            continue
+                        except RuntimeError as e:
+                            print(f"STOPPING: {e}")
                             log_row([datetime.now(), "linkedin", card.get("title"),
-                                      card.get("company"), "skipped", "no Easy Apply button"])
-                            from common.external_tracker import log_external_job
-                            job_link = page.url
-                            ext_link = page.evaluate("() => document.querySelector('.jobs-apply-button')?.href || ''")
-                            log_external_job("linkedin", card.get("title") or "", card.get("company") or "", job_link or "", ext_link or "", loc, "", card.get("posted") or "")
-                            print(f"Skipped (External Apply logged to CSV): {card.get('title')} @ {card.get('company')}")
-                            time.sleep(3)
-                    except SubmissionUnconfirmed as e:
-                        print(f"UNCERTAIN: {card.get('title')} @ {card.get('company')} — {e}")
-                        log_row([datetime.now(), "linkedin", card.get("title"),
-                                  card.get("company"), "uncertain", str(e)])
-                        time.sleep(profile.min_delay_seconds_between_applications)
-                        continue
-                    except RuntimeError as e:
-                        print(f"STOPPING: {e}")
-                        log_row([datetime.now(), "linkedin", card.get("title"),
-                                  card.get("company"), "stopped", str(e)])
-                        browser.close()
-                        return
+                                      card.get("company"), "stopped", str(e)])
+                            browser.close()
+                            return
 
         browser.close()
 

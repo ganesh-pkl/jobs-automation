@@ -22,11 +22,24 @@ def log_row(row: list):
     new_file = not Path(LOG_FILE).exists()
     if new_file:
         Path(LOG_FILE).touch(mode=0o600)
-    with open(LOG_FILE, "a", newline="") as f:
-        w = csv.writer(f)
-        if new_file:
-            w.writerow(["timestamp", "platform", "job_title", "company", "status", "notes"])
-        w.writerow([str(x) for x in row])
+    with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        try:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        except Exception:
+            pass
+        try:
+            w = csv.writer(f)
+            if new_file and f.tell() == 0:
+                w.writerow(["timestamp", "platform", "job_title", "company", "status", "notes"])
+            w.writerow([str(x) for x in row])
+            f.flush()
+        finally:
+            try:
+                import fcntl
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
 
 def _job_key(title: str | None, company: str | None) -> tuple[str, str]:
     return (
@@ -68,7 +81,7 @@ def count_applications_today() -> int:
                     pass
     return count
 
-def run():
+def run(limit: int | None = None):
     profile = Profile.load()
     if not Path(SESSION_FILE).exists():
         raise SystemExit(f"{SESSION_FILE} not found. Run: python login_capture.py uplers")
@@ -76,7 +89,8 @@ def run():
     applied_today = count_applications_today()
     daily_limit = int(profile.data.get("daily_application_limit", 100))
     remaining_today = max(0, daily_limit - applied_today)
-    run_success_limit = min(profile.stop_after_n_applications, remaining_today)
+    target_limit = limit if limit is not None else profile.stop_after_n_applications
+    run_success_limit = min(target_limit, remaining_today)
     
     if run_success_limit <= 0:
         print(f"Daily application limit reached ({applied_today}/{daily_limit}).")
@@ -85,7 +99,7 @@ def run():
     applied = 0
     
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, slow_mo=100)
+        browser = p.chromium.launch(headless=profile.browser_mode == "headless", slow_mo=100)
         context = browser.new_context(storage_state=SESSION_FILE)
         page = context.new_page()
 
@@ -248,8 +262,10 @@ def run():
                         
                     # Log success
                     applied += 1
+                    applied_keys.add(_job_key(title, "uplers"))
+                    applied_keys.add(_job_key(title, "Unknown"))
                     log_row([datetime.now().isoformat(), "uplers", title, "Unknown", "applied", "success"])
-                    print(f"Applied: {title} ({applied} total)")
+                    print(f"Applied: {title} ({applied} total this run)")
                     time.sleep(profile.min_delay_seconds_between_applications)
                     
                 except Exception as e:

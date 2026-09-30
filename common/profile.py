@@ -65,10 +65,12 @@ class Profile:
                                       or not math.isfinite(value) or value < 0):
                 raise ValueError(f"{key} must be a finite non-negative number.")
         for key in ("stop_after_n_applications", "stop_after_n_attempts", "daily_application_limit",
-                    "max_pages_per_role", "human_input_timeout_seconds", "job_freshness_days"):
-            value = data.get(key, 1)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-                raise ValueError(f"{key} must be a positive integer.")
+                    "max_pages_per_role", "human_input_timeout_seconds", "job_freshness_days",
+                    "naukri_daily_limit", "linkedin_daily_limit", "foundit_daily_limit"):
+            if key in data:
+                value = data[key]
+                if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                    raise ValueError(f"{key} must be a positive integer.")
         for key in ("night_shift_ok", "weekend_ok", "immediately_available"):
             if key in data and not isinstance(data[key], bool):
                 raise ValueError(f"{key} must be true or false, without quotes.")
@@ -85,7 +87,8 @@ class Profile:
                 raise ValueError(f"{lower} must not exceed {upper}.")
         defaults = {"company_exclude": [], "company_include_only": [], "relocate_cities": [],
                     "work_mode": "flexible", "seniority_floor_years": 0, "seniority_ceiling_years": 5,
-                    "job_freshness_days": 1, "stop_after_n_applications": 5, "ctc_disclosure_policy": "negotiable"}
+                    "job_freshness_days": 1, "stop_after_n_applications": 100, "ctc_disclosure_policy": "negotiable",
+                    "naukri_daily_limit": 40, "linkedin_daily_limit": 15, "foundit_daily_limit": 30}
         for key, value in defaults.items():
             data.setdefault(key, value)
         if data.get("browser_mode", "visible") not in {"visible", "minimized", "headless"}:
