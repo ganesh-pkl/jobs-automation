@@ -440,6 +440,13 @@ def build_linkedin_search_url(
 
 
 def run(limit: int | None = None):
+    # LinkedIn automation is temporarily commented out / paused due to account block.
+    print("\n" + "=" * 65)
+    print(" [!] LinkedIn automation is temporarily PAUSED due to account block.")
+    print("     To resume in the future, remove this pause return once unblocked.")
+    print("=" * 65 + "\n")
+    return
+
     profile = Profile.load()
     if not Path(SESSION_FILE).exists():
         raise SystemExit(f"{SESSION_FILE} not found. Run: python login_capture.py linkedin")

@@ -283,13 +283,13 @@ def main():
         total_added += collect_naukri_external_jobs(page, profile)
         context.close()
 
-        # 2. LinkedIn scanning
-        linkedin_session = "session_linkedin.json"
-        if Path(linkedin_session).exists():
-            context = browser.new_context(storage_state=linkedin_session)
-            page = context.new_page()
-            total_added += collect_linkedin_external_jobs(page, profile)
-            context.close()
+        # 2. LinkedIn scanning (Temporarily paused due to account block)
+        # linkedin_session = "session_linkedin.json"
+        # if Path(linkedin_session).exists():
+        #     context = browser.new_context(storage_state=linkedin_session)
+        #     page = context.new_page()
+        #     total_added += collect_linkedin_external_jobs(page, profile)
+        #     context.close()
 
         # 3. Foundit scanning
         foundit_session = "session_foundit.json"

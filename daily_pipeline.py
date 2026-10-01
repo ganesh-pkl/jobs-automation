@@ -193,7 +193,7 @@ def run_parallel():
     tasks = [
         ("Hirist", [sys.executable, "hirist_apply.py"]),
         ("Naukri", [sys.executable, "naukri_apply.py"]),
-        ("LinkedIn", [sys.executable, "linkedin_apply.py"]),
+        # ("LinkedIn", [sys.executable, "linkedin_apply.py"]),  # Temporarily paused due to account block
         ("Uplers", [sys.executable, "uplers_apply.py"]),
         ("Instahyre", [sys.executable, "instahyre_apply.py"]),
         ("Foundit", [sys.executable, "foundit_apply.py"]),
@@ -284,20 +284,20 @@ def run_pipeline():
     else:
         print(f"\n>>> [2/6] Skipping Naukri — {'safe daily limit reached' if naukri_remaining <= 0 else 'daily target reached'}.")
 
-    # 3. Run LinkedIn
-    remaining = get_remaining_global()
-    current_stats = get_applied_stats_today(today)
-    linkedin_remaining = max(0, linkedin_safe_limit - current_stats.get("linkedin", 0))
-    linkedin_alloc = min(remaining, linkedin_remaining)
-    if remaining > 0 and linkedin_alloc > 0:
-        print(f"\n>>> [3/6] Running LinkedIn Easy Apply (Safe cap allocation: {linkedin_alloc})...")
-        try:
-            import linkedin_apply
-            linkedin_apply.run(limit=linkedin_alloc)
-        except Exception as e:
-            print(f"  (LinkedIn execution note: {e})")
-    else:
-        print(f"\n>>> [3/6] Skipping LinkedIn — {'safe daily limit reached' if linkedin_remaining <= 0 else 'daily target reached'}.")
+    # 3. Run LinkedIn (Temporarily paused due to account block)
+    # remaining = get_remaining_global()
+    # current_stats = get_applied_stats_today(today)
+    # linkedin_remaining = max(0, linkedin_safe_limit - current_stats.get("linkedin", 0))
+    # linkedin_alloc = min(remaining, linkedin_remaining)
+    # if remaining > 0 and linkedin_alloc > 0:
+    #     print(f"\n>>> [3/6] Running LinkedIn Easy Apply (Safe cap allocation: {linkedin_alloc})...")
+    #     try:
+    #         import linkedin_apply
+    #         linkedin_apply.run(limit=linkedin_alloc)
+    #     except Exception as e:
+    #         print(f"  (LinkedIn execution note: {e})")
+    # else:
+    #     print(f"\n>>> [3/6] Skipping LinkedIn — {'safe daily limit reached' if linkedin_remaining <= 0 else 'daily target reached'}.")
 
     # 4. Run Foundit
     remaining = get_remaining_global()
