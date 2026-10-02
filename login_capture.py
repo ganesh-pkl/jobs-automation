@@ -23,6 +23,8 @@ SITES = {
     "instahyre": "https://www.instahyre.com/login/",
     "foundit": "https://www.foundit.in/auth/login",
     "wellfound": "https://wellfound.com/login",
+    "glassdoor": "https://www.glassdoor.co.in/profile/login_input.htm",
+    "indeed": "https://secure.indeed.com/auth",
 }
 
 

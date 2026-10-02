@@ -74,6 +74,7 @@ naukri_daily_limit: 40         # safe daily cap to protect Naukri account
 linkedin_daily_limit: 15       # safe daily cap to protect LinkedIn account
 foundit_daily_limit: 30        # safe daily cap to protect Foundit account
 wellfound_daily_limit: 25      # safe daily cap to protect Wellfound account
+glassdoor_daily_limit: 25      # safe daily cap to protect Glassdoor/Indeed account
 min_delay_seconds_between_applications: 75
 max_delay_seconds_between_applications: 135
 
