@@ -52,10 +52,10 @@ def load_historical_applied() -> set[tuple[str, str]]:
 def get_applied_stats_today(today_date: date) -> dict[str, int]:
     log_path = Path(APPLICATIONS_LOG)
     if not log_path.exists():
-        return {"naukri": 0, "linkedin": 0, "hirist": 0, "uplers": 0, "instahyre": 0, "foundit": 0}
+        return {"naukri": 0, "linkedin": 0, "hirist": 0, "uplers": 0, "instahyre": 0, "foundit": 0, "wellfound": 0}
     
     seen_today = set()
-    stats = {"naukri": 0, "linkedin": 0, "hirist": 0, "uplers": 0, "instahyre": 0, "foundit": 0}
+    stats = {"naukri": 0, "linkedin": 0, "hirist": 0, "uplers": 0, "instahyre": 0, "foundit": 0, "wellfound": 0}
     
     try:
         with log_path.open(newline="", encoding="utf-8") as f:
@@ -120,6 +120,7 @@ def print_summary_report(today: date, today_str: str):
     uplers_applied_today = final_stats["uplers"]
     instahyre_applied_today = final_stats["instahyre"]
     foundit_applied_today = final_stats["foundit"]
+    wellfound_applied_today = final_stats["wellfound"]
     total_applied_today = sum(final_stats.values())
     total_applied_historical = len(final_applied_history)
     new_external_count = final_external_count
@@ -144,6 +145,8 @@ def print_summary_report(today: date, today_str: str):
     print(f"  Applied: {instahyre_applied_today}\n")
     print(f"Foundit:")
     print(f"  Applied: {foundit_applied_today}\n")
+    print(f"Wellfound:")
+    print(f"  Applied: {wellfound_applied_today}\n")
     print(f"Total successful applications today: {total_applied_today}\n")
     print(f"Total successful applications historically: {total_applied_historical}\n")
     print(f"New external/manual jobs added to CSV: {new_external_count}\n")
@@ -176,6 +179,7 @@ def run_parallel():
     naukri_safe_limit = int(profile.data.get("naukri_daily_limit", 40))
     linkedin_safe_limit = int(profile.data.get("linkedin_daily_limit", 15))
     foundit_safe_limit = int(profile.data.get("foundit_daily_limit", 30))
+    wellfound_safe_limit = int(profile.data.get("wellfound_daily_limit", 25))
 
     initial_applied_history = load_historical_applied()
 
@@ -186,8 +190,9 @@ def run_parallel():
     print(f"Naukri Safe Cap:                                  {naukri_safe_limit}")
     print(f"LinkedIn Safe Cap:                                {linkedin_safe_limit}")
     print(f"Foundit Safe Cap:                                 {foundit_safe_limit}")
+    print(f"Wellfound Safe Cap:                               {wellfound_safe_limit}")
     print(f"Permanent Application History:                    {len(initial_applied_history)} jobs recorded")
-    print(f"Mode:                                             6 Platforms Running Concurrently")
+    print(f"Mode:                                             7 Platforms Running Concurrently")
     print("=" * 65 + "\n")
 
     tasks = [
@@ -197,6 +202,7 @@ def run_parallel():
         ("Uplers", [sys.executable, "uplers_apply.py"]),
         ("Instahyre", [sys.executable, "instahyre_apply.py"]),
         ("Foundit", [sys.executable, "foundit_apply.py"]),
+        ("Wellfound", [sys.executable, "wellfound_apply.py"]),
     ]
 
     processes = {}
@@ -205,7 +211,7 @@ def run_parallel():
         p = subprocess.Popen(cmd)
         processes[name] = p
 
-    print("\n🚀 All 6 platforms are actively running in parallel!")
+    print("\n🚀 All active platforms are actively running in parallel!")
     print("   (Waiting for all browser sessions to complete...)\n")
 
     try:
@@ -238,6 +244,7 @@ def run_pipeline():
     naukri_safe_limit = int(profile.data.get("naukri_daily_limit", 40))
     linkedin_safe_limit = int(profile.data.get("linkedin_daily_limit", 15))
     foundit_safe_limit = int(profile.data.get("foundit_daily_limit", 30))
+    wellfound_safe_limit = int(profile.data.get("wellfound_daily_limit", 25))
 
     initial_applied_history = load_historical_applied()
 
@@ -248,6 +255,7 @@ def run_pipeline():
     print(f"Naukri Safe Daily Cap:                            {naukri_safe_limit}")
     print(f"LinkedIn Safe Daily Cap:                          {linkedin_safe_limit}")
     print(f"Foundit Safe Daily Cap:                           {foundit_safe_limit}")
+    print(f"Wellfound Safe Daily Cap:                         {wellfound_safe_limit}")
     print(f"Permanent Application History:                    {len(initial_applied_history)} jobs recorded")
     print(f"Today's External Jobs CSV:                        Reset to 0 rows (active working queue)")
     print("=" * 65 + "\n")
@@ -260,14 +268,14 @@ def run_pipeline():
     # 1. Run Hirist
     remaining = get_remaining_global()
     if remaining > 0:
-        print(f">>> [1/6] Running Hirist Automation (Target remaining: {remaining})...")
+        print(f">>> [1/7] Running Hirist Automation (Target remaining: {remaining})...")
         try:
             import hirist_apply
             hirist_apply.run(limit=remaining)
         except Exception as e:
             print(f"  (Hirist execution note: {e})")
     else:
-        print(">>> [1/6] Skipping Hirist — daily application target already reached.")
+        print(">>> [1/7] Skipping Hirist — daily application target already reached.")
 
     # 2. Run Naukri
     remaining = get_remaining_global()
@@ -275,14 +283,14 @@ def run_pipeline():
     naukri_remaining = max(0, naukri_safe_limit - current_stats.get("naukri", 0))
     naukri_alloc = min(remaining, naukri_remaining)
     if remaining > 0 and naukri_alloc > 0:
-        print(f"\n>>> [2/6] Running Naukri Automation (Safe cap allocation: {naukri_alloc})...")
+        print(f"\n>>> [2/7] Running Naukri Automation (Safe cap allocation: {naukri_alloc})...")
         try:
             import naukri_apply
             naukri_apply.run(limit=naukri_alloc)
         except Exception as e:
             print(f"  (Naukri execution note: {e})")
     else:
-        print(f"\n>>> [2/6] Skipping Naukri — {'safe daily limit reached' if naukri_remaining <= 0 else 'daily target reached'}.")
+        print(f"\n>>> [2/7] Skipping Naukri — {'safe daily limit reached' if naukri_remaining <= 0 else 'daily target reached'}.")
 
     # 3. Run LinkedIn (Temporarily paused due to account block)
     # remaining = get_remaining_global()
@@ -290,14 +298,14 @@ def run_pipeline():
     # linkedin_remaining = max(0, linkedin_safe_limit - current_stats.get("linkedin", 0))
     # linkedin_alloc = min(remaining, linkedin_remaining)
     # if remaining > 0 and linkedin_alloc > 0:
-    #     print(f"\n>>> [3/6] Running LinkedIn Easy Apply (Safe cap allocation: {linkedin_alloc})...")
+    #     print(f"\n>>> [3/7] Running LinkedIn Easy Apply (Safe cap allocation: {linkedin_alloc})...")
     #     try:
     #         import linkedin_apply
     #         linkedin_apply.run(limit=linkedin_alloc)
     #     except Exception as e:
     #         print(f"  (LinkedIn execution note: {e})")
     # else:
-    #     print(f"\n>>> [3/6] Skipping LinkedIn — {'safe daily limit reached' if linkedin_remaining <= 0 else 'daily target reached'}.")
+    #     print(f"\n>>> [3/7] Skipping LinkedIn — {'safe daily limit reached' if linkedin_remaining <= 0 else 'daily target reached'}.")
 
     # 4. Run Foundit
     remaining = get_remaining_global()
@@ -305,38 +313,53 @@ def run_pipeline():
     foundit_remaining = max(0, foundit_safe_limit - current_stats.get("foundit", 0))
     foundit_alloc = min(remaining, foundit_remaining)
     if remaining > 0 and foundit_alloc > 0:
-        print(f"\n>>> [4/6] Running Foundit Automation (Safe cap allocation: {foundit_alloc})...")
+        print(f"\n>>> [4/7] Running Foundit Automation (Safe cap allocation: {foundit_alloc})...")
         try:
             import foundit_apply
             foundit_apply.run(limit=foundit_alloc)
         except Exception as e:
             print(f"  (Foundit execution note: {e})")
     else:
-        print(f"\n>>> [4/6] Skipping Foundit — {'safe daily limit reached' if foundit_remaining <= 0 else 'daily target reached'}.")
+        print(f"\n>>> [4/7] Skipping Foundit — {'safe daily limit reached' if foundit_remaining <= 0 else 'daily target reached'}.")
 
-    # 5. Run Uplers
+    # 5. Run Wellfound (AngelList Talent)
+    remaining = get_remaining_global()
+    current_stats = get_applied_stats_today(today)
+    wellfound_remaining = max(0, wellfound_safe_limit - current_stats.get("wellfound", 0))
+    wellfound_alloc = min(remaining, wellfound_remaining)
+    if remaining > 0 and wellfound_alloc > 0:
+        print(f"\n>>> [5/7] Running Wellfound Automation (Safe cap allocation: {wellfound_alloc})...")
+        try:
+            import wellfound_apply
+            wellfound_apply.run(limit=wellfound_alloc)
+        except Exception as e:
+            print(f"  (Wellfound execution note: {e})")
+    else:
+        print(f"\n>>> [5/7] Skipping Wellfound — {'safe daily limit reached' if wellfound_remaining <= 0 else 'daily target reached'}.")
+
+    # 6. Run Uplers
     remaining = get_remaining_global()
     if remaining > 0:
-        print(f"\n>>> [5/6] Running Uplers Automation (Target remaining: {remaining})...")
+        print(f"\n>>> [6/7] Running Uplers Automation (Target remaining: {remaining})...")
         try:
             import uplers_apply
             uplers_apply.run(limit=remaining)
         except Exception as e:
             print(f"  (Uplers execution note: {e})")
     else:
-        print("\n>>> [5/6] Skipping Uplers — daily application target already reached.")
+        print("\n>>> [6/7] Skipping Uplers — daily application target already reached.")
 
-    # 6. Run Instahyre (High-capacity platform to fulfill all remaining quota up to total_target)
+    # 7. Run Instahyre (High-capacity platform to fulfill all remaining quota up to total_target)
     remaining = get_remaining_global()
     if remaining > 0:
-        print(f"\n>>> [6/6] Running Instahyre Automation (Allocating remaining target: {remaining})...")
+        print(f"\n>>> [7/7] Running Instahyre Automation (Allocating remaining target: {remaining})...")
         try:
             import instahyre_apply
             instahyre_apply.run(limit=remaining)
         except Exception as e:
             print(f"  (Instahyre execution note: {e})")
     else:
-        print("\n>>> [6/6] Skipping Instahyre — daily application target already reached.")
+        print("\n>>> [7/7] Skipping Instahyre — daily application target already reached.")
 
     print_summary_report(today, today_str)
 
@@ -345,7 +368,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Multi-portal Job Application Pipeline")
     parser.add_argument("--serial", action="store_true", help="Run sequentially one portal at a time")
-    parser.add_argument("--parallel", action="store_true", default=True, help="Run all 6 portals in parallel (default)")
+    parser.add_argument("--parallel", action="store_true", default=True, help="Run all 7 portals in parallel (default)")
     args = parser.parse_args()
 
     if args.serial:

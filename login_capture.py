@@ -22,6 +22,7 @@ SITES = {
     "uplers": "https://platform.uplers.com/login",
     "instahyre": "https://www.instahyre.com/login/",
     "foundit": "https://www.foundit.in/auth/login",
+    "wellfound": "https://wellfound.com/login",
 }
 
 

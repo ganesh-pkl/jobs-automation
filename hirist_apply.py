@@ -83,9 +83,9 @@ def run(limit: int | None = None):
                 if applied >= target_limit:
                     break
                 url = (
-                    f"https://www.hirist.tech/search/{slug}-jobs.html"
+                    f"https://www.hirist.tech/search/{slug}-jobs"
                     if page_no == 1
-                    else f"https://www.hirist.tech/search/{slug}-jobs-page-{page_no}.html"
+                    else f"https://www.hirist.tech/search/{slug}-jobs-page-{page_no}"
                 )
                 
                 print(f"\n--- Searching Hirist: {role} (Page {page_no}) ---")
@@ -104,8 +104,8 @@ def run(limit: int | None = None):
                 except Exception:
                     pass
                 
-                # Hirist wraps job cards in anchor tags starting with /j/
-                card_locators = page.locator("a[href^='/j/']").all()
+                # Hirist wraps job cards in anchor tags containing /j/
+                card_locators = page.locator("a[href*='/j/']").all()
                 print(f"Found {len(card_locators)} jobs on page {page_no}.")
                 if len(card_locators) == 0:
                     break
@@ -178,9 +178,10 @@ def run(limit: int | None = None):
                     print(f"\nEvaluating: {title} @ {company}")
                     
                     # Navigate to the job page
+                    job_url = href if href.startswith("http") else f"https://www.hirist.tech{href}"
                     job_page = context.new_page()
                     try:
-                        job_page.goto(f"https://www.hirist.tech{href}", wait_until="domcontentloaded", timeout=15000)
+                        job_page.goto(job_url, wait_until="domcontentloaded", timeout=15000)
                         time.sleep(2)
                         
                         apply_btn = job_page.locator("button:has-text('Apply'), a:has-text('Apply')").first
@@ -190,7 +191,7 @@ def run(limit: int | None = None):
                                 print("  External application. Logging to CSV.")
                                 log_row([datetime.now().isoformat(), "hirist", title, company, "skipped", "external link"])
                                 from common.external_tracker import log_external_job
-                                log_external_job("hirist", title, company, f"https://www.hirist.tech{href}", job_page.url, "", exp_text, posted_text)
+                                log_external_job("hirist", title, company, job_url, job_page.url, "", exp_text, posted_text)
                             else:
                                 print("  Found Apply button! Clicking...")
                                 apply_btn.click()

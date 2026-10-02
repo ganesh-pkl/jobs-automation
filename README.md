@@ -1,6 +1,6 @@
 # Multi-Platform Daily Job Application Pipeline
 
-An automated, intelligent daily job application pipeline that searches, matches, auto-fills screening questionnaires via AI, and applies across **Naukri**, **LinkedIn**, **Hirist**, **Foundit** (Monster), **Uplers**, and **Instahyre**.
+An automated, intelligent daily job application pipeline that searches, matches, auto-fills screening questionnaires via AI, and applies across **Naukri**, **LinkedIn**, **Hirist**, **Foundit** (Monster), **Wellfound** (AngelList), **Uplers**, and **Instahyre**.
 
 Designed to run **once every morning** as an autonomous daily workflow with persistent duplicate prevention and an actionable external application queue.
 
@@ -22,11 +22,12 @@ Designed to run **once every morning** as an autonomous daily workflow with pers
     • Tracks historical counts                            • No duplicates / No applied jobs
 ```
 
-### 1. 6-in-1 Platform Support
+### 1. 7-in-1 Platform Support
 * **Naukri**: Searches fresh jobs, applies directly, handles multi-turn chatbot screening drawers, and extracts external links.
 * **LinkedIn**: Scans Easy Apply postings, navigates multi-step modals (`Contact Info` ➔ `Screening Questions` ➔ `Review` ➔ `Submit`), and collects external ATS openings.
 * **Hirist.tech**: Evaluates fresh tech openings, navigates `/screening` questionnaires, auto-selects radio choices, and logs company careers links.
 * **Foundit (Monster)**: Searches targeted keyword/role queries, evaluates experience and freshness filters, handles Quick Apply / Apply Now modals, and logs external careers links.
+* **Wellfound (AngelList)**: Filters direct 1-click startup roles, evaluates match criteria, crafts tailored recruiter pitch notes via LLM, and submits applications directly.
 * **Uplers**: Evaluates opportunities in the talent dashboard, auto-fills application dialogs, and submits applications.
 * **Instahyre**: Searches matched tech roles & keywords on Instahyre candidate dashboard, auto-fills screening notes, and submits applications.
 
@@ -78,6 +79,7 @@ playwright install chromium
    python login_capture.py linkedin
    python login_capture.py hirist
    python login_capture.py foundit
+   python login_capture.py wellfound
    python login_capture.py uplers
    python login_capture.py instahyre
    ```
@@ -89,7 +91,7 @@ playwright install chromium
 
 ### Daily Morning Run (Recommended)
 
-Run the full 6-platform pipeline every morning with a single command:
+Run the full 7-platform pipeline every morning with a single command:
 
 ```bash
 python daily_pipeline.py
@@ -104,6 +106,7 @@ python run_all.py
 You can also run any platform independently:
 
 ```bash
+python wellfound_apply.py   # Run Wellfound automation
 python hirist_apply.py      # Run Hirist automation
 python naukri_apply.py      # Run Naukri automation
 python linkedin_apply.py    # Run LinkedIn Easy Apply
@@ -138,15 +141,18 @@ Hirist:
 Foundit:
   Applied: 10
 
+Wellfound:
+  Applied: 8
+
 Uplers:
   Applied: 4
 
 Instahyre:
   Applied: 6
 
-Total successful applications today: 58
+Total successful applications today: 66
 
-Total successful applications historically: 146
+Total successful applications historically: 154
 
 New external/manual jobs added to CSV: 16
 
