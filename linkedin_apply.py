@@ -15,6 +15,7 @@ from common.profile import Profile
 from common import llm
 from common import stats_tracker
 from common.answers import get_screening_answer
+from common.recruiter_connect import extract_hiring_manager, send_recruiter_connection_request
 
 SESSION_FILE = "session_linkedin.json"
 LOG_FILE = "applications_log.csv"
@@ -1615,6 +1616,16 @@ def run(limit: int | None = None):
                         log_row([datetime.now(), "linkedin", card.get("title"),
                                   card.get("company"), "applied", ""])
                         print(f"Applied: {card.get('title')} @ {card.get('company')} ({applied} total this run)")
+
+                        # Outreach to hiring manager / recruiter if visible on the job posting
+                        if profile.data.get("connect_with_hiring_manager", True):
+                            try:
+                                recruiter_info = extract_hiring_manager(page)
+                                if recruiter_info:
+                                    send_recruiter_connection_request(page, recruiter_info, card.get("title", ""), card.get("company", ""), profile)
+                            except Exception:
+                                pass
+
                         wait_before_next_application(profile)
                     else:
                         log_row([datetime.now(), "linkedin", card.get("title"),
@@ -1624,6 +1635,16 @@ def run(limit: int | None = None):
                         ext_link = page.evaluate("() => document.querySelector('.jobs-apply-button')?.href || ''")
                         log_external_job("linkedin", card.get("title") or "", card.get("company") or "", job_link or "", ext_link or "", loc, "", card.get("posted") or "")
                         print(f"Skipped (External Apply logged to CSV): {card.get('title')} @ {card.get('company')}")
+
+                        # Outreach to hiring manager even for external/non-Easy Apply if enabled
+                        if profile.data.get("connect_with_hiring_manager", True):
+                            try:
+                                recruiter_info = extract_hiring_manager(page)
+                                if recruiter_info:
+                                    send_recruiter_connection_request(page, recruiter_info, card.get("title", ""), card.get("company", ""), profile)
+                            except Exception:
+                                pass
+
                         time.sleep(random.uniform(2.0, 3.5))
                 except SubmissionUnconfirmed as e:
                     print(f"UNCERTAIN: {card.get('title')} @ {card.get('company')} — {e}")

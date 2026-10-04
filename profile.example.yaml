@@ -99,3 +99,7 @@ max_pages_per_role: 5
 browser_mode: "visible"
 
 resume_file_name: "your_resume.pdf"   # must match the filename already uploaded to Naukri/LinkedIn, and sit in this same project folder
+
+# LinkedIn Recruiter Outreach Automation (<=200 char note)
+connect_with_hiring_manager: true
+max_connection_requests_per_day: 10
