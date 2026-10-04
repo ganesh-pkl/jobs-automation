@@ -38,11 +38,172 @@ from common import llm
 SESSION_FILE = "session_glassdoor.json"
 LOG_FILE = "applications_log.csv"
 
-STOP_PHRASES = [
-    "verify you are human", "security check", "turnstile",
-    "captcha", "unusual traffic", "blocked", "access denied",
-    "we have detected unusual activity", "challenge-running"
-]
+
+def is_security_checkpoint(page) -> bool:
+    """Accurately checks for real bot challenges without false positives from minified JS bundles."""
+    try:
+        title = page.title().lower()
+        if any(t in title for t in ["security check", "robot or human", "access denied", "attention required", "just a moment", "cloudflare"]):
+            return True
+        
+        # Check challenge DOM containers
+        challenge_selectors = [
+            '#challenge-running', '#cf-challenge-running', '#turnstile-wrapper',
+            'iframe[src*="cloudflare"]', 'iframe[src*="recaptcha"]',
+            'div[class*="captcha-container"]', 'div[id*="captcha"]'
+        ]
+        for sel in challenge_selectors:
+            loc = page.locator(sel).first
+            if loc.is_visible(timeout=300):
+                return True
+
+        # Check visible text
+        body = page.locator("body").inner_text(timeout=500).lower()
+        if "verify you are human" in body or "please enable cookies and reload" in body or "we have detected unusual traffic" in body:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def dismiss_glassdoor_overlays(page):
+    """Closes any popups, job alert prompts, cookie banners, or review modals that block clicks."""
+    # 1. Send Escape key to dismiss any open active dialogs/modals
+    try:
+        page.keyboard.press("Escape")
+        time.sleep(0.3)
+    except Exception:
+        pass
+
+    # 2. Specifically look for close buttons on dialogs/modals (e.g. "Create job alert")
+    modal_close_selectors = [
+        'div[role="dialog"] button[aria-label="Close"]',
+        'div[role="dialog"] button.CloseButton',
+        'div[role="dialog"] button:has(svg)',
+        'button[aria-label="Close"]',
+        'button[data-test="modal-close-btn"]',
+        'button.modal_closeIcon',
+        '[data-test="close-button"]',
+        'button:has-text("✕")',
+        '#onetrust-accept-btn-handler',
+        'button:has-text("Accept all")',
+        'button:has-text("Accept Cookies")',
+        'button:has-text("I Agree")'
+    ]
+    for sel in modal_close_selectors:
+        try:
+            btns = page.locator(sel)
+            count = btns.count()
+            for i in range(count):
+                btn = btns.nth(i)
+                if btn.is_visible(timeout=150):
+                    btn.click(timeout=1000, force=True)
+                    time.sleep(0.3)
+        except Exception:
+            pass
+
+    # 3. Dismiss any job alert dialog via DOM query
+    try:
+        page.evaluate("""() => {
+            const dialogs = document.querySelectorAll('div[role="dialog"], [class*="modal"], [class*="Modal"], [class*="Overlay"]');
+            dialogs.forEach(d => {
+                const text = d.innerText || '';
+                if (text.includes('job alert') || text.includes('Create job alert') || text.includes('restore your access')) {
+                    const btn = d.querySelector('button[aria-label="Close"], button');
+                    if (btn) btn.click();
+                }
+            });
+        }""")
+    except Exception:
+        pass
+
+
+def is_ui_pill_active(page, selector: str) -> bool:
+    """Checks if a UI filter button/pill is currently active in Glassdoor."""
+    try:
+        return bool(page.evaluate(f"""() => {{
+            const btn = document.querySelector('{selector}');
+            if (!btn) return false;
+            if (btn.getAttribute('aria-pressed') === 'true') return true;
+            if (btn.getAttribute('aria-checked') === 'true') return true;
+            if (btn.getAttribute('data-selected') === 'true') return true;
+            const cls = (btn.className || '').toLowerCase();
+            if (cls.includes('active') || cls.includes('selected') || cls.includes('applied') || cls.includes('checked')) return true;
+            const style = window.getComputedStyle(btn);
+            const bg = style.backgroundColor;
+            if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'rgb(255, 255, 255)' && bg !== 'rgb(245, 246, 247)' && bg !== 'rgb(238, 240, 243)') return true;
+            if (btn.querySelector('svg[data-icon="check"], [class*="check"], svg[data-icon="xmark"]')) return true;
+            return false;
+        }}"""))
+    except Exception:
+        return False
+
+
+def apply_glassdoor_ui_filters(page, profile: Profile):
+    """
+    Explicitly sets Glassdoor UI filter pills in correct order:
+    1. 'Date posted' -> 'Last 3 days' (or configured job_freshness_days)
+    2. 'Remote only' (if remote profile)
+    3. 'Easy Apply only' (verified active at the end)
+    """
+    dismiss_glassdoor_overlays(page)
+
+    # 1. Set 'Date posted' dropdown first
+    freshness = getattr(profile, "job_freshness_days", 3)
+    if freshness <= 1:
+        target_option = "Last day"
+    elif freshness <= 3:
+        target_option = "Last 3 days"
+    elif freshness <= 7:
+        target_option = "Last 3 days"
+    elif freshness <= 14:
+        target_option = "Last 2 weeks"
+    else:
+        target_option = "Last month"
+
+    try:
+        date_pill = page.locator('button:has-text("Date posted"), [data-test="date-posted-filter"]').first
+        if date_pill.is_visible(timeout=1500):
+            pill_text = date_pill.inner_text().lower()
+            if target_option.lower() not in pill_text:
+                print(f"  [Filter] Setting 'Date posted' -> '{target_option}'...")
+                dismiss_glassdoor_overlays(page)
+                date_pill.click(timeout=3000, force=True)
+                time.sleep(1)
+                option_btn = page.locator(f'button:has-text("{target_option}"), li:has-text("{target_option}"), span:has-text("{target_option}"), div:has-text("{target_option}")').first
+                if option_btn.is_visible(timeout=2000):
+                    option_btn.click(timeout=3000, force=True)
+                    time.sleep(2)
+                    dismiss_glassdoor_overlays(page)
+    except Exception:
+        pass
+
+    # 2. Activate 'Remote only' filter pill if remote profile
+    if profile.work_mode in ("remote_only", "remote_first"):
+        try:
+            remote_pill = page.locator('button:has-text("Remote only"), [data-test="remote-filter"]').first
+            if remote_pill.is_visible(timeout=1500):
+                if not is_ui_pill_active(page, '[data-test="remote-filter"]') and not is_ui_pill_active(page, 'button:has-text("Remote only")'):
+                    print("  [Filter] Activating 'Remote only' pill...")
+                    dismiss_glassdoor_overlays(page)
+                    remote_pill.click(timeout=3000, force=True)
+                    time.sleep(2)
+                    dismiss_glassdoor_overlays(page)
+        except Exception:
+            pass
+
+    # 3. Finally, ensure 'Easy Apply only' filter pill is active
+    try:
+        easy_apply_pill = page.locator('button:has-text("Easy Apply only"), [data-test="easy-apply-filter"]').first
+        if easy_apply_pill.is_visible(timeout=2000):
+            if not is_ui_pill_active(page, '[data-test="easy-apply-filter"]') and not is_ui_pill_active(page, 'button:has-text("Easy Apply only")'):
+                print("  [Filter] Activating 'Easy Apply only' pill...")
+                dismiss_glassdoor_overlays(page)
+                easy_apply_pill.click(timeout=3000, force=True)
+                time.sleep(2)
+                dismiss_glassdoor_overlays(page)
+    except Exception:
+        pass
 
 
 def log_row(row: list):
@@ -432,13 +593,13 @@ def handle_indeed_smartapply_flow(apply_page, profile: Profile, job_title: str, 
     for step in range(max_steps):
         time.sleep(1.5)
         curr_url = apply_page.url.lower()
-        page_content = apply_page.content().lower()
 
         # Check for CAPTCHA / bot detection
-        if any(sp in page_content for sp in STOP_PHRASES):
+        if is_security_checkpoint(apply_page):
             return "security_checkpoint", "Hit bot/security checkpoint on application page"
 
         # 1. Post-Apply Confirmation
+        page_content = apply_page.content().lower()
         if "post-apply" in curr_url or "submitted" in page_content or "application submitted" in page_content:
             return "applied", "Successfully submitted via Indeed SmartApply"
 
@@ -518,18 +679,14 @@ def run(limit: int | None = None, specific_role: str | None = None, dry_run: boo
     roles = [specific_role] if specific_role else profile.target_roles
     applied_keys = load_applied_job_keys()
     today_applied = count_applications_today()
-
-    max_limit = limit if limit is not None else getattr(profile, "glassdoor_daily_limit", 25)
-    remaining_budget = max(0, max_limit - today_applied)
+    platform_threshold = int(profile.data.get("glassdoor_limit", profile.data.get("glassdoor_run_limit", profile.data.get("glassdoor_daily_limit", 15))))
+    target_limit = limit if limit is not None else platform_threshold
+    run_limit = min(target_limit, int(profile.stop_after_n_applications or 100))
 
     print(f"=== Glassdoor / Indeed Apply Automation ===")
-    print(f"Date: {date.today()} | Applied today: {today_applied} | Daily Limit: {max_limit} | Remaining: {remaining_budget}")
+    print(f"Date: {date.today()} | Applied today: {today_applied} | Platform Threshold: {platform_threshold} | Target This Run: {run_limit}")
     if dry_run:
         print(">>> RUNNING IN DRY-RUN MODE: No real applications will be submitted. <<<")
-
-    if remaining_budget <= 0:
-        print("Daily application budget reached for Glassdoor. Exiting cleanly.")
-        return
 
     session_path = Path(SESSION_FILE)
     if not session_path.exists():
@@ -552,23 +709,34 @@ def run(limit: int | None = None, specific_role: str | None = None, dry_run: boo
         page = context.new_page()
 
         for role in roles:
-            if applied_count >= remaining_budget:
+            if applied_count >= run_limit:
                 break
 
             print(f"\n==========================================")
             print(f"Searching Glassdoor for: {role}")
             print(f"==========================================")
 
-            # Build search URL
-            role_slug = urllib.parse.quote(role)
-            freshness = getattr(profile, "job_freshness_days", 3)
+            # Build search URL with Easy Apply filter and freshness
+            role_encoded = urllib.parse.quote(role)
+            freshness_days = getattr(profile, "job_freshness_days", 3)
+            if freshness_days <= 1:
+                from_age = 1
+            elif freshness_days <= 3:
+                from_age = 3
+            elif freshness_days <= 7:
+                from_age = 7
+            elif freshness_days <= 14:
+                from_age = 14
+            else:
+                from_age = 30
+
             remote_param = "&remoteWorkType=1" if profile.work_mode in ("remote_only", "remote_first") else ""
             
             for page_no in range(1, profile.max_pages_per_role + 1):
-                if applied_count >= remaining_budget:
+                if applied_count >= run_limit:
                     break
 
-                search_url = f"https://www.glassdoor.co.in/Job/jobs.htm?sc.keyword={role_slug}&fromAge={freshness}&applicationType=1{remote_param}&p={page_no}"
+                search_url = f"https://www.glassdoor.co.in/Job/jobs.htm?sc.keyword={role_encoded}&applicationType=1&fromAge={from_age}{remote_param}&p={page_no}"
                 print(f"\n--- Page {page_no}: {search_url} ---")
 
                 try:
@@ -577,12 +745,15 @@ def run(limit: int | None = None, specific_role: str | None = None, dry_run: boo
                     print("  (Page load timed out, continuing...)")
 
                 time.sleep(3)
+                dismiss_glassdoor_overlays(page)
 
                 # Check security check
-                content_lower = page.content().lower()
-                if any(sp in content_lower for sp in STOP_PHRASES):
-                    print("  [ALERT] Security / Bot check detected on Glassdoor search page. Pausing automation.")
+                if is_security_checkpoint(page):
+                    print("  [ALERT] Real Security / Bot check detected on Glassdoor search page. Pausing automation.")
                     break
+
+                # Ensure UI filter pills (Easy Apply, Remote only, Date posted) are active
+                apply_glassdoor_ui_filters(page, profile)
 
                 # Extract job listing items
                 job_cards = page.evaluate("""() => {
@@ -593,7 +764,8 @@ def run(limit: int | None = None, specific_role: str | None = None, dry_run: boo
                         const companyEl = el.querySelector('[data-test="employer-name"], div[class*="employerName"], span[class*="employerName"]');
                         const locEl = el.querySelector('[data-test="emp-location"], div[class*="location"], span[class*="location"]');
                         const ageEl = el.querySelector('[data-test="job-age"], div[class*="listingAge"]');
-                        const easyApplyEl = el.querySelector('[data-test="job-easy-apply"], span:has-text("Easy Apply")');
+                        const easyApplyEl = el.querySelector('[data-test="job-easy-apply"]') || 
+                                            Array.from(el.querySelectorAll('span, div, p')).find(s => s.innerText && s.innerText.includes('Easy Apply'));
                         
                         if (titleEl) {
                             cards.push({
@@ -616,7 +788,7 @@ def run(limit: int | None = None, specific_role: str | None = None, dry_run: boo
                     break
 
                 for card_info in job_cards:
-                    if applied_count >= remaining_budget:
+                    if applied_count >= run_limit:
                         break
 
                     title = card_info.get("title", "")
@@ -649,11 +821,13 @@ def run(limit: int | None = None, specific_role: str | None = None, dry_run: boo
                     attempt_count += 1
 
                     # Click the job card on the left list to load the detail pane
+                    dismiss_glassdoor_overlays(page)
                     card_loc = page.locator(f'li[data-test="jobListing"], div[data-test="jobListing"]').nth(card_info["index"])
                     try:
                         card_loc.scroll_into_view_if_needed(timeout=3000)
-                        card_loc.click(timeout=3000)
+                        card_loc.click(timeout=3000, force=True)
                         time.sleep(2)
+                        dismiss_glassdoor_overlays(page)
                     except Exception as e:
                         print(f"  (Failed to select job card: {e})")
                         continue
@@ -672,19 +846,39 @@ def run(limit: int | None = None, specific_role: str | None = None, dry_run: boo
                         )
                         continue
 
-                    # Click Easy Apply and capture the new tab/page or current page flow
-                    with context.expect_page() as new_page_info:
-                        try:
-                            easy_apply_btn.click()
-                        except Exception as e:
-                            print(f"  (Click error: {e})")
-                            continue
+                    # Click Easy Apply and capture either a newly opened tab or same-tab navigation
+                    initial_pages = set(context.pages)
+                    dismiss_glassdoor_overlays(page)
 
                     try:
-                        apply_page = new_page_info.value
-                        apply_page.wait_for_load_state("domcontentloaded", timeout=15000)
+                        easy_apply_btn.click(timeout=5000, force=True)
+                    except Exception as e:
+                        print(f"  (Click error: {e})")
+                        continue
+
+                    # Give browser up to 5 seconds to either open a popup or navigate current page
+                    apply_page = None
+                    for _ in range(10):
+                        time.sleep(0.5)
+                        new_pages = [p for p in context.pages if p not in initial_pages]
+                        if new_pages:
+                            apply_page = new_pages[0]
+                            break
+                        if "smartapply" in page.url or "indeedapply" in page.url or "apply" in page.url.lower():
+                            apply_page = page
+                            break
+                        if page.locator('iframe[src*="indeed"], div[class*="apply-modal"], div[role="dialog"]').first.is_visible():
+                            apply_page = page
+                            break
+
+                    if not apply_page:
+                        new_pages = [p for p in context.pages if p not in initial_pages]
+                        apply_page = new_pages[0] if new_pages else page
+
+                    try:
+                        apply_page.wait_for_load_state("domcontentloaded", timeout=10000)
                     except Exception:
-                        apply_page = page
+                        pass
 
                     print(f"  -> Opened application portal: {apply_page.url}")
 
@@ -705,6 +899,13 @@ def run(limit: int | None = None, specific_role: str | None = None, dry_run: boo
                             apply_page.close()
                         except Exception:
                             pass
+                    else:
+                        # If application happened in the same tab, navigate back to the search results
+                        try:
+                            page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
+                            dismiss_glassdoor_overlays(page)
+                        except Exception:
+                            pass
 
                     # Record application log
                     timestamp = datetime.now().isoformat(timespec="seconds")
@@ -713,10 +914,10 @@ def run(limit: int | None = None, specific_role: str | None = None, dry_run: boo
                     if status in ("applied", "dry_run_success"):
                         applied_count += 1
                         applied_keys.add(job_key)
-                        stats_tracker.record_applied("glassdoor")
+                        stats_tracker.record_discovered(1)
 
                         # Respect human-like delays
-                        if not dry_run and applied_count < remaining_budget:
+                        if not dry_run and applied_count < run_limit:
                             delay = random.randint(
                                 int(profile.min_delay_seconds_between_applications),
                                 int(profile.max_delay_seconds_between_applications)

@@ -428,28 +428,22 @@ def run(role: str | None = None, limit: int | None = None, dry_run: bool = False
         )
 
     applied_today = count_applications_today()
-    wf_limit = int(profile.data.get("wellfound_daily_limit", 25))
-    daily_limit = int(profile.data.get("daily_application_limit", 100))
-    remaining_today = max(0, min(wf_limit - applied_today, daily_limit - applied_today))
-
-    target_limit = limit if limit is not None else profile.stop_after_n_applications
-    run_limit = min(target_limit, remaining_today)
+    platform_threshold = int(profile.data.get("wellfound_limit", profile.data.get("wellfound_run_limit", profile.data.get("wellfound_daily_limit", 25))))
+    target_limit = limit if limit is not None else platform_threshold
+    run_limit = min(target_limit, int(profile.stop_after_n_applications or 100))
 
     print("=" * 65)
     print("        WELLFOUND (ANGELLIST) APPLICATION ENGINE")
     print("=" * 65)
-    print(f"Wellfound Daily Cap:            {wf_limit} (Applied today: {applied_today})")
-    print(f"Global Target For This Run:     {run_limit}")
+    print(f"Platform Threshold:             {platform_threshold}")
+    print(f"Applied Today (Info):           {applied_today}")
+    print(f"Target For This Run:            {run_limit}")
     print(f"Target Roles:                   {', '.join(profile.target_roles)}")
     print(f"Freshness Filter:               <= {profile.job_freshness_days} day(s)")
     print(f"Seniority Floor / Ceiling:      {profile.seniority_floor_years} - {profile.seniority_ceiling_years} years")
     print(f"Browser Mode:                   {profile.browser_mode}")
     print(f"Dry Run Mode:                   {dry_run}")
     print("=" * 65 + "\n")
-
-    if run_limit <= 0 and not dry_run:
-        print(f"Daily application limit for Wellfound reached ({applied_today}/{wf_limit}). Exiting.")
-        return
 
     applied_keys = load_applied_job_keys()
     roles_to_search = [role] if role else profile.target_roles[:5]

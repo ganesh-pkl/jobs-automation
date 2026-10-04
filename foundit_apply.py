@@ -249,87 +249,141 @@ def _is_application_confirmation(page_text: str, button_text: str = "") -> bool:
 
 def handle_screening_form(page, profile: Profile, job_title: str, company: str) -> bool:
     """
-    Handles any screening questions modal or questionnaire that appears on Foundit.
-    Returns True if handled/submitted successfully.
+    Handles any screening questions modal or multi-step questionnaire on Foundit.
+    Loops through multi-step forms (Next -> Next -> Submit) until finished.
     """
     job_context = f"{job_title} at {company}"
     
-    # Check for screening dialog/container
-    modal = page.locator(".modal, [role='dialog'], .questionnaire-container, .screening-modal, .apply-modal, .applyModal, .popup-container").first
-    if not modal.is_visible():
-        return True
-    container = modal
+    max_steps = 5
+    for step in range(max_steps):
+        # Locate modal or questionnaire container
+        modal = page.locator(".modal, [role='dialog'], .questionnaire-container, .screening-modal, .apply-modal, .applyModal, .popup-container, div[class*='applyDialog' i]").first
+        if not modal.is_visible(timeout=1500):
+            # Check if modal closed or direct apply completed
+            break
+        container = modal
 
-    # 1. Handle text inputs & textareas inside the modal
-    inputs = container.locator("textarea, input[type='text'], input:not([type]):not([hidden]), input[type='number']").all()
-    for inp in inputs:
-        if not inp.is_visible() or inp.is_disabled():
-            continue
-        curr_val = inp.input_value()
-        if curr_val:
-            continue
+        # 1. Handle text inputs, number inputs & textareas inside the modal
+        inputs = container.locator("textarea, input[type='text'], input:not([type]):not([hidden]), input[type='number']").all()
+        for inp in inputs:
+            if not inp.is_visible() or inp.is_disabled():
+                continue
+            curr_val = inp.input_value()
+            if curr_val and len(curr_val.strip()) > 0:
+                continue
 
-        # Extract question/label
-        label = ""
-        try:
-            label_el = inp.locator("xpath=../../preceding-sibling::label | ../preceding-sibling::label | preceding-sibling::label | ../label").first
-            if label_el.count() > 0:
-                label = label_el.inner_text().strip()
-        except Exception:
-            pass
-
-        if not label:
-            label = inp.get_attribute("placeholder") or inp.get_attribute("aria-label") or inp.get_attribute("name") or "Screening Question"
-
-        if is_sensitive_field(label):
-            val = ask_user(f"Foundit asks sensitive question:\n{label}")
-        else:
-            val = get_screening_answer(label, profile, job_context)
-
-        if val is not None:
+            # Extract question/label
+            label = ""
             try:
-                inp.fill(str(val))
-                time.sleep(0.3)
-                print(f"    Auto-filled '{label[:30]}': {str(val)[:30]}")
-            except Exception as e:
-                print(f"    Warning: Could not fill '{label}': {e}")
+                label_el = inp.locator("xpath=../../preceding-sibling::label | ../preceding-sibling::label | preceding-sibling::label | ../label").first
+                if label_el.count() > 0:
+                    label = label_el.inner_text().strip()
+            except Exception:
+                pass
 
-    # 2. Handle Radio button questions (Yes / No)
-    radio_groups = container.locator("input[type='radio']").all()
-    if radio_groups:
-        yes_radios = container.locator("label").filter(has_text=re.compile(r"^Yes$", re.I)).all()
-        for yr in yes_radios:
-            if yr.is_visible():
+            if not label:
+                label = inp.get_attribute("placeholder") or inp.get_attribute("aria-label") or inp.get_attribute("name") or "Screening Question"
+
+            if is_sensitive_field(label):
+                val = ask_user(f"Foundit asks sensitive question:\n{label}")
+            else:
+                val = get_screening_answer(label, profile, job_context)
+
+            if val is not None:
                 try:
-                    yr.click()
+                    inp.scroll_into_view_if_needed()
+                    inp.fill(str(val))
+                    time.sleep(0.3)
+                    print(f"    Auto-filled '{label[:30]}': {str(val)[:30]}")
+                except Exception as e:
+                    print(f"    Warning: Could not fill '{label}': {e}")
+
+        # 2. Handle Radio button questions (Yes / No / Options)
+        radio_groups = container.locator("input[type='radio']").all()
+        if radio_groups:
+            yes_radios = container.locator("label").filter(has_text=re.compile(r"^Yes$", re.I)).all()
+            for yr in yes_radios:
+                if yr.is_visible():
+                    try:
+                        yr.click(force=True)
+                        time.sleep(0.2)
+                    except Exception:
+                        pass
+
+        # 3. Handle Select Dropdowns
+        selects = container.locator("select").all()
+        for sel in selects:
+            if sel.is_visible():
+                try:
+                    options = sel.locator("option").all()
+                    if len(options) > 1:
+                        sel.select_option(index=1)
+                        time.sleep(0.2)
+                except Exception:
+                    pass
+
+        # 4. Handle Checkboxes (e.g. Terms / Declarations)
+        checkboxes = container.locator("input[type='checkbox']").all()
+        for chk in checkboxes:
+            if chk.is_visible() and not chk.is_checked():
+                try:
+                    chk.click(force=True)
                     time.sleep(0.2)
                 except Exception:
                     pass
 
-    # 3. Handle Select Dropdowns
-    selects = container.locator("select").all()
-    for sel in selects:
-        if sel.is_visible():
-            try:
-                options = sel.locator("option").all()
-                if len(options) > 1:
-                    sel.select_option(index=1)
-            except Exception:
-                pass
+        # 5. Find and Click Action Button (Next / Submit / Continue / Apply / Proceed)
+        action_selectors = [
+            "button:has-text('Next')",
+            "button:has-text('Save & Next')",
+            "button:has-text('Save & Continue')",
+            "button:has-text('Submit')",
+            "button:has-text('Apply')",
+            "button:has-text('Confirm')",
+            "button:has-text('Proceed')",
+            "button:has-text('Continue')",
+            "input[type='submit']",
+            "[class*='submit-btn']",
+            "[class*='next-btn']",
+            "button[type='submit']",
+            "button.btn-primary",
+            "button.primary-btn"
+        ]
 
-    # 4. Click Submit / Next / Apply button in modal
-    submit_buttons = container.locator(
-        "button:has-text('Submit'), button:has-text('Apply'), button:has-text('Confirm'), "
-        "button:has-text('Continue'), input[type='submit'], [class*='submit-btn']"
-    ).all()
-    
-    for btn in submit_buttons:
-        if btn.is_visible() and not btn.is_disabled():
-            btn_text = btn.inner_text().strip()
-            print(f"    Clicking modal action: '{btn_text}'")
-            btn.click()
-            time.sleep(2)
-            return True
+        action_clicked = False
+        for sel in action_selectors:
+            btns = container.locator(sel).all()
+            for btn in btns:
+                if btn.is_visible() and not btn.is_disabled():
+                    btn_text = btn.inner_text().strip()
+                    print(f"    Clicking modal action: '{btn_text}' (Step {step + 1})...")
+                    try:
+                        btn.scroll_into_view_if_needed()
+                        time.sleep(0.2)
+                        btn.click(timeout=2500, force=True)
+                        time.sleep(2)
+                        action_clicked = True
+                        break
+                    except Exception:
+                        try:
+                            btn.evaluate("el => el.click()")
+                            time.sleep(2)
+                            action_clicked = True
+                            break
+                        except Exception:
+                            pass
+            if action_clicked:
+                break
+
+        if not action_clicked:
+            # Check if any button in modal footer can be clicked
+            footer_btn = container.locator("footer button, .modal-footer button, [class*='footer' i] button").last
+            if footer_btn.is_visible() and not footer_btn.is_disabled():
+                print(f"    Clicking modal footer button: '{footer_btn.inner_text().strip()}'...")
+                footer_btn.click(force=True)
+                time.sleep(2)
+            else:
+                break
 
     return True
 
@@ -345,28 +399,22 @@ def run(role: str | None = None, limit: int | None = None, dry_run: bool = False
         )
 
     applied_today = count_applications_today()
-    foundit_limit = int(profile.data.get("foundit_daily_limit", 30))
-    daily_limit = int(profile.data.get("daily_application_limit", 100))
-    remaining_today = max(0, min(foundit_limit - applied_today, daily_limit - applied_today))
-
-    target_limit = limit if limit is not None else profile.stop_after_n_applications
-    run_limit = min(target_limit, remaining_today)
+    platform_threshold = int(profile.data.get("foundit_limit", profile.data.get("foundit_run_limit", profile.data.get("foundit_daily_limit", 30))))
+    target_limit = limit if limit is not None else platform_threshold
+    run_limit = min(target_limit, int(profile.stop_after_n_applications or 100))
 
     print("=" * 65)
     print(f"           FOUNDIT APPLICATION AUTOMATION ENGINE")
     print("=" * 65)
-    print(f"Foundit Daily Cap:              {foundit_limit} (Applied today: {applied_today})")
-    print(f"Global Target For This Run:     {run_limit}")
+    print(f"Platform Threshold:             {platform_threshold}")
+    print(f"Applied Today (Info):           {applied_today}")
+    print(f"Target For This Run:            {run_limit}")
     print(f"Target Roles:                   {', '.join(profile.target_roles)}")
     print(f"Freshness Filter:               <= {profile.job_freshness_days} day(s)")
     print(f"Seniority Floor / Ceiling:      {profile.seniority_floor_years} - {profile.seniority_ceiling_years} years")
     print(f"Browser Mode:                   {profile.browser_mode}")
     print(f"Dry Run Mode:                   {dry_run}")
     print("=" * 65 + "\n")
-
-    if run_limit <= 0 and not dry_run:
-        print(f"Daily application limit for Foundit reached ({applied_today}/{foundit_limit}). Exiting.")
-        return
 
     applied_keys = load_applied_job_keys()
     roles_to_search = [role] if role else profile.target_roles

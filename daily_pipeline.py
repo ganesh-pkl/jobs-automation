@@ -52,10 +52,10 @@ def load_historical_applied() -> set[tuple[str, str]]:
 def get_applied_stats_today(today_date: date) -> dict[str, int]:
     log_path = Path(APPLICATIONS_LOG)
     if not log_path.exists():
-        return {"naukri": 0, "linkedin": 0, "hirist": 0, "uplers": 0, "instahyre": 0, "foundit": 0, "wellfound": 0, "glassdoor": 0}
+        return {"naukri": 0, "linkedin": 0, "hirist": 0, "uplers": 0, "instahyre": 0, "foundit": 0, "wellfound": 0, "glassdoor": 0, "apna": 0}
     
     seen_today = set()
-    stats = {"naukri": 0, "linkedin": 0, "hirist": 0, "uplers": 0, "instahyre": 0, "foundit": 0, "wellfound": 0, "glassdoor": 0}
+    stats = {"naukri": 0, "linkedin": 0, "hirist": 0, "uplers": 0, "instahyre": 0, "foundit": 0, "wellfound": 0, "glassdoor": 0, "apna": 0}
     
     try:
         with log_path.open(newline="", encoding="utf-8") as f:
@@ -124,6 +124,7 @@ def print_summary_report(today: date, today_str: str):
     foundit_applied_today = final_stats["foundit"]
     wellfound_applied_today = final_stats["wellfound"]
     glassdoor_applied_today = final_stats["glassdoor"]
+    apna_applied_today = final_stats["apna"]
     total_applied_today = sum(final_stats.values())
     total_applied_historical = len(final_applied_history)
     new_external_count = final_external_count
@@ -150,8 +151,10 @@ def print_summary_report(today: date, today_str: str):
     print(f"  Applied: {foundit_applied_today}\n")
     print(f"Wellfound:")
     print(f"  Applied: {wellfound_applied_today}\n")
-    print(f"Glassdoor / Indeed:")
+    print(f"Glassdoor / Indeed SmartApply:")
     print(f"  Applied: {glassdoor_applied_today}\n")
+    print(f"Apna:")
+    print(f"  Applied: {apna_applied_today}\n")
     print(f"Total successful applications today: {total_applied_today}\n")
     print(f"Total successful applications historically: {total_applied_historical}\n")
     print(f"New external/manual jobs added to CSV: {new_external_count}\n")
@@ -180,12 +183,16 @@ def run_parallel():
     reset_external_jobs_csv()
 
     profile = Profile.load()
-    total_target = int(profile.data.get("daily_application_limit", 100))
-    naukri_safe_limit = int(profile.data.get("naukri_daily_limit", 40))
-    linkedin_safe_limit = int(profile.data.get("linkedin_daily_limit", 15))
-    foundit_safe_limit = int(profile.data.get("foundit_daily_limit", 30))
-    wellfound_safe_limit = int(profile.data.get("wellfound_daily_limit", 25))
-    glassdoor_safe_limit = int(profile.data.get("glassdoor_daily_limit", 25))
+    total_target = int(profile.data.get("stop_after_n_applications", 100))
+    naukri_safe_limit = int(profile.data.get("naukri_limit", profile.data.get("naukri_run_limit", profile.data.get("naukri_daily_limit", 40))))
+    linkedin_safe_limit = int(profile.data.get("linkedin_limit", profile.data.get("linkedin_run_limit", profile.data.get("linkedin_daily_limit", 15))))
+    foundit_safe_limit = int(profile.data.get("foundit_limit", profile.data.get("foundit_run_limit", profile.data.get("foundit_daily_limit", 30))))
+    wellfound_safe_limit = int(profile.data.get("wellfound_limit", profile.data.get("wellfound_run_limit", profile.data.get("wellfound_daily_limit", 25))))
+    glassdoor_safe_limit = int(profile.data.get("glassdoor_limit", profile.data.get("glassdoor_run_limit", profile.data.get("glassdoor_daily_limit", 15))))
+    apna_safe_limit = int(profile.data.get("apna_limit", profile.data.get("apna_run_limit", profile.data.get("apna_daily_limit", 25))))
+    hirist_safe_limit = int(profile.data.get("hirist_limit", profile.data.get("hirist_run_limit", profile.data.get("hirist_daily_limit", 30))))
+    uplers_safe_limit = int(profile.data.get("uplers_limit", profile.data.get("uplers_run_limit", profile.data.get("uplers_daily_limit", 30))))
+    instahyre_safe_limit = int(profile.data.get("instahyre_limit", profile.data.get("instahyre_run_limit", profile.data.get("instahyre_daily_limit", 50))))
 
     initial_applied_history = load_historical_applied()
 
@@ -193,24 +200,29 @@ def run_parallel():
     print(f"       STARTING PARALLEL JOB APPLICATION PIPELINE — {today_str}")
     print("=" * 65)
     print(f"Target Total Applications (Across All Platforms): {total_target}")
-    print(f"Naukri Safe Cap:                                  {naukri_safe_limit}")
-    print(f"LinkedIn Safe Cap:                                {linkedin_safe_limit}")
-    print(f"Foundit Safe Cap:                                 {foundit_safe_limit}")
-    print(f"Wellfound Safe Cap:                               {wellfound_safe_limit}")
-    print(f"Glassdoor Safe Cap:                               {glassdoor_safe_limit}")
+    print(f"Naukri Safe Threshold (Per Run):                  {naukri_safe_limit}")
+    print(f"LinkedIn Safe Threshold (Per Run):                {linkedin_safe_limit}")
+    print(f"Foundit Safe Threshold (Per Run):                 {foundit_safe_limit}")
+    print(f"Wellfound Safe Threshold (Per Run):               {wellfound_safe_limit}")
+    print(f"Glassdoor Safe Threshold (Per Run):               {glassdoor_safe_limit}")
+    print(f"Apna Safe Threshold (Per Run):                    {apna_safe_limit}")
+    print(f"Hirist Safe Threshold (Per Run):                  {hirist_safe_limit}")
+    print(f"Uplers Safe Threshold (Per Run):                  {uplers_safe_limit}")
+    print(f"Instahyre Safe Threshold (Per Run):               {instahyre_safe_limit}")
     print(f"Permanent Application History:                    {len(initial_applied_history)} jobs recorded")
-    print(f"Mode:                                             8 Platforms Running Concurrently")
+    print(f"Mode:                                             9 Platforms Running Concurrently")
     print("=" * 65 + "\n")
 
     tasks = [
         ("Hirist", [sys.executable, "hirist_apply.py"]),
         ("Naukri", [sys.executable, "naukri_apply.py"]),
-        # ("LinkedIn", [sys.executable, "linkedin_apply.py"]),  # Temporarily paused due to account block
+        ("LinkedIn", [sys.executable, "linkedin_apply.py"]),
         ("Uplers", [sys.executable, "uplers_apply.py"]),
         ("Instahyre", [sys.executable, "instahyre_apply.py"]),
         ("Foundit", [sys.executable, "foundit_apply.py"]),
         ("Wellfound", [sys.executable, "wellfound_apply.py"]),
         ("Glassdoor", [sys.executable, "glassdoor_apply.py"]),
+        ("Apna", [sys.executable, "apna_apply.py"]),
     ]
 
     processes = {}
@@ -248,137 +260,114 @@ def run_pipeline():
     reset_external_jobs_csv()
 
     profile = Profile.load()
-    total_target = int(profile.data.get("daily_application_limit", 100))
-    naukri_safe_limit = int(profile.data.get("naukri_daily_limit", 40))
-    linkedin_safe_limit = int(profile.data.get("linkedin_daily_limit", 15))
-    foundit_safe_limit = int(profile.data.get("foundit_daily_limit", 30))
-    wellfound_safe_limit = int(profile.data.get("wellfound_daily_limit", 25))
-    glassdoor_safe_limit = int(profile.data.get("glassdoor_daily_limit", 25))
+    total_target = int(profile.data.get("stop_after_n_applications", 100))
+    naukri_safe_limit = int(profile.data.get("naukri_limit", profile.data.get("naukri_run_limit", profile.data.get("naukri_daily_limit", 40))))
+    linkedin_safe_limit = int(profile.data.get("linkedin_limit", profile.data.get("linkedin_run_limit", profile.data.get("linkedin_daily_limit", 15))))
+    foundit_safe_limit = int(profile.data.get("foundit_limit", profile.data.get("foundit_run_limit", profile.data.get("foundit_daily_limit", 30))))
+    wellfound_safe_limit = int(profile.data.get("wellfound_limit", profile.data.get("wellfound_run_limit", profile.data.get("wellfound_daily_limit", 25))))
+    glassdoor_safe_limit = int(profile.data.get("glassdoor_limit", profile.data.get("glassdoor_run_limit", profile.data.get("glassdoor_daily_limit", 15))))
+    apna_safe_limit = int(profile.data.get("apna_limit", profile.data.get("apna_run_limit", profile.data.get("apna_daily_limit", 25))))
+    hirist_safe_limit = int(profile.data.get("hirist_limit", profile.data.get("hirist_run_limit", profile.data.get("hirist_daily_limit", 30))))
+    uplers_safe_limit = int(profile.data.get("uplers_limit", profile.data.get("uplers_run_limit", profile.data.get("uplers_daily_limit", 30))))
+    instahyre_safe_limit = int(profile.data.get("instahyre_limit", profile.data.get("instahyre_run_limit", profile.data.get("instahyre_daily_limit", 50))))
 
     initial_applied_history = load_historical_applied()
 
     print("=" * 65)
     print(f"       STARTING SEQUENTIAL JOB APPLICATION PIPELINE — {today_str}")
     print("=" * 65)
-    print(f"Target Total Applications (Across All Platforms): {total_target}")
-    print(f"Naukri Safe Daily Cap:                            {naukri_safe_limit}")
-    print(f"LinkedIn Safe Daily Cap:                          {linkedin_safe_limit}")
-    print(f"Foundit Safe Daily Cap:                           {foundit_safe_limit}")
-    print(f"Wellfound Safe Daily Cap:                         {wellfound_safe_limit}")
-    print(f"Glassdoor Safe Daily Cap:                         {glassdoor_safe_limit}")
+    print(f"Target Total Applications (Per Run):              {total_target}")
+    print(f"Naukri Safe Threshold (Per Run):                  {naukri_safe_limit}")
+    print(f"LinkedIn Safe Threshold (Per Run):                {linkedin_safe_limit}")
+    print(f"Foundit Safe Threshold (Per Run):                 {foundit_safe_limit}")
+    print(f"Wellfound Safe Threshold (Per Run):               {wellfound_safe_limit}")
+    print(f"Glassdoor Safe Threshold (Per Run):               {glassdoor_safe_limit}")
+    print(f"Apna Safe Threshold (Per Run):                    {apna_safe_limit}")
+    print(f"Hirist Safe Threshold (Per Run):                  {hirist_safe_limit}")
+    print(f"Uplers Safe Threshold (Per Run):                  {uplers_safe_limit}")
+    print(f"Instahyre Safe Threshold (Per Run):               {instahyre_safe_limit}")
     print(f"Permanent Application History:                    {len(initial_applied_history)} jobs recorded")
     print(f"Today's External Jobs CSV:                        Reset to 0 rows (active working queue)")
     print("=" * 65 + "\n")
 
-    def get_remaining_global() -> int:
-        stats = get_applied_stats_today(today)
-        applied_so_far = sum(stats.values())
-        return max(0, total_target - applied_so_far)
-
     # 1. Run Hirist
-    remaining = get_remaining_global()
-    if remaining > 0:
-        print(f">>> [1/8] Running Hirist Automation (Target remaining: {remaining})...")
-        try:
-            import hirist_apply
-            hirist_apply.run(limit=remaining)
-        except Exception as e:
-            print(f"  (Hirist execution note: {e})")
-    else:
-        print(">>> [1/8] Skipping Hirist — daily application target already reached.")
+    print(f">>> [1/9] Running Hirist Automation (Threshold: {hirist_safe_limit})...")
+    try:
+        import hirist_apply
+        hirist_apply.run(limit=hirist_safe_limit)
+    except Exception as e:
+        print(f"  (Hirist execution note: {e})")
 
     # 2. Run Naukri
-    remaining = get_remaining_global()
-    current_stats = get_applied_stats_today(today)
-    naukri_remaining = max(0, naukri_safe_limit - current_stats.get("naukri", 0))
-    naukri_alloc = min(remaining, naukri_remaining)
-    if remaining > 0 and naukri_alloc > 0:
-        print(f"\n>>> [2/8] Running Naukri Automation (Safe cap allocation: {naukri_alloc})...")
-        try:
-            import naukri_apply
-            naukri_apply.run(limit=naukri_alloc)
-        except Exception as e:
-            print(f"  (Naukri execution note: {e})")
-    else:
-        print(f"\n>>> [2/8] Skipping Naukri — {'safe daily limit reached' if naukri_remaining <= 0 else 'daily target reached'}.")
+    print(f"\n>>> [2/9] Running Naukri Automation (Threshold: {naukri_safe_limit})...")
+    try:
+        import naukri_apply
+        naukri_apply.run(limit=naukri_safe_limit)
+    except Exception as e:
+        print(f"  (Naukri execution note: {e})")
 
-    # 3. Run Foundit
-    remaining = get_remaining_global()
-    current_stats = get_applied_stats_today(today)
-    foundit_remaining = max(0, foundit_safe_limit - current_stats.get("foundit", 0))
-    foundit_alloc = min(remaining, foundit_remaining)
-    if remaining > 0 and foundit_alloc > 0:
-        print(f"\n>>> [3/8] Running Foundit Automation (Safe cap allocation: {foundit_alloc})...")
-        try:
-            import foundit_apply
-            foundit_apply.run(limit=foundit_alloc)
-        except Exception as e:
-            print(f"  (Foundit execution note: {e})")
-    else:
-        print(f"\n>>> [3/8] Skipping Foundit — {'safe daily limit reached' if foundit_remaining <= 0 else 'daily target reached'}.")
+    # 3. Run LinkedIn
+    print(f"\n>>> [3/9] Running LinkedIn Automation (Threshold: {linkedin_safe_limit})...")
+    try:
+        import linkedin_apply
+        linkedin_apply.run(limit=linkedin_safe_limit)
+    except Exception as e:
+        print(f"  (LinkedIn execution note: {e})")
 
-    # 4. Run Wellfound (AngelList Talent)
-    remaining = get_remaining_global()
-    current_stats = get_applied_stats_today(today)
-    wellfound_remaining = max(0, wellfound_safe_limit - current_stats.get("wellfound", 0))
-    wellfound_alloc = min(remaining, wellfound_remaining)
-    if remaining > 0 and wellfound_alloc > 0:
-        print(f"\n>>> [4/8] Running Wellfound Automation (Safe cap allocation: {wellfound_alloc})...")
-        try:
-            import wellfound_apply
-            wellfound_apply.run(limit=wellfound_alloc)
-        except Exception as e:
-            print(f"  (Wellfound execution note: {e})")
-    else:
-        print(f"\n>>> [4/8] Skipping Wellfound — {'safe daily limit reached' if wellfound_remaining <= 0 else 'daily target reached'}.")
+    # 4. Run Foundit
+    print(f"\n>>> [4/9] Running Foundit Automation (Threshold: {foundit_safe_limit})...")
+    try:
+        import foundit_apply
+        foundit_apply.run(limit=foundit_safe_limit)
+    except Exception as e:
+        print(f"  (Foundit execution note: {e})")
 
-    # 5. Run Glassdoor / Indeed
-    remaining = get_remaining_global()
-    current_stats = get_applied_stats_today(today)
-    glassdoor_remaining = max(0, glassdoor_safe_limit - current_stats.get("glassdoor", 0))
-    glassdoor_alloc = min(remaining, glassdoor_remaining)
-    if remaining > 0 and glassdoor_alloc > 0:
-        print(f"\n>>> [5/8] Running Glassdoor/Indeed Automation (Safe cap allocation: {glassdoor_alloc})...")
-        try:
-            import glassdoor_apply
-            glassdoor_apply.run(limit=glassdoor_alloc)
-        except Exception as e:
-            print(f"  (Glassdoor execution note: {e})")
-    else:
-        print(f"\n>>> [5/8] Skipping Glassdoor — {'safe daily limit reached' if glassdoor_remaining <= 0 else 'daily target reached'}.")
+    # 5. Run Wellfound (AngelList Talent)
+    print(f"\n>>> [5/9] Running Wellfound Automation (Threshold: {wellfound_safe_limit})...")
+    try:
+        import wellfound_apply
+        wellfound_apply.run(limit=wellfound_safe_limit)
+    except Exception as e:
+        print(f"  (Wellfound execution note: {e})")
 
-    # 6. Run Uplers
-    remaining = get_remaining_global()
-    if remaining > 0:
-        print(f"\n>>> [6/8] Running Uplers Automation (Target remaining: {remaining})...")
-        try:
-            import uplers_apply
-            uplers_apply.run(limit=remaining)
-        except Exception as e:
-            print(f"  (Uplers execution note: {e})")
-    else:
-        print("\n>>> [6/8] Skipping Uplers — daily application target already reached.")
+    # 6. Run Glassdoor / Indeed SmartApply
+    print(f"\n>>> [6/9] Running Glassdoor Automation (Threshold: {glassdoor_safe_limit})...")
+    try:
+        import glassdoor_apply
+        glassdoor_apply.run(limit=glassdoor_safe_limit)
+    except Exception as e:
+        print(f"  (Glassdoor execution note: {e})")
 
-    # 7. Run Instahyre (High-capacity platform to fulfill all remaining quota up to total_target)
-    remaining = get_remaining_global()
-    if remaining > 0:
-        print(f"\n>>> [7/8] Running Instahyre Automation (Allocating remaining target: {remaining})...")
-        try:
-            import instahyre_apply
-            instahyre_apply.run(limit=remaining)
-        except Exception as e:
-            print(f"  (Instahyre execution note: {e})")
-    else:
-        print("\n>>> [7/8] Skipping Instahyre — daily application target already reached.")
+    # 7. Run Apna
+    print(f"\n>>> [7/9] Running Apna Automation (Threshold: {apna_safe_limit})...")
+    try:
+        import apna_apply
+        apna_apply.run(limit=apna_safe_limit)
+    except Exception as e:
+        print(f"  (Apna execution note: {e})")
 
-    print_summary_report(today, today_str)
+    # 8. Run Uplers
+    print(f"\n>>> [8/9] Running Uplers Automation (Threshold: {uplers_safe_limit})...")
+    try:
+        import uplers_apply
+        uplers_apply.run(limit=uplers_safe_limit)
+    except Exception as e:
+        print(f"  (Uplers execution note: {e})")
+
+    # 9. Run Instahyre
+    print(f"\n>>> [9/9] Running Instahyre Automation (Threshold: {instahyre_safe_limit})...")
+    try:
+        import instahyre_apply
+        instahyre_apply.run(limit=instahyre_safe_limit)
+    except Exception as e:
+        print(f"  (Instahyre execution note: {e})")
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Multi-portal Job Application Pipeline")
     parser.add_argument("--serial", action="store_true", help="Run sequentially one portal at a time")
-    parser.add_argument("--parallel", action="store_true", default=True, help="Run all 7 portals in parallel (default)")
+    parser.add_argument("--parallel", action="store_true", default=True, help="Run all platforms in parallel (default)")
     args = parser.parse_args()
 
     if args.serial:

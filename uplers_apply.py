@@ -184,14 +184,10 @@ def run(limit: int | None = None):
         raise SystemExit(f"{SESSION_FILE} not found. Run: python login_capture.py uplers")
 
     applied_today = count_applications_today()
-    daily_limit = int(profile.data.get("daily_application_limit", 100))
-    remaining_today = max(0, daily_limit - applied_today)
-    target_limit = limit if limit is not None else profile.stop_after_n_applications
-    run_success_limit = min(target_limit, remaining_today)
-    
-    if run_success_limit <= 0:
-        print(f"Daily application limit reached ({applied_today}/{daily_limit}).")
-        return
+    platform_threshold = int(profile.data.get("uplers_limit", profile.data.get("uplers_run_limit", profile.data.get("uplers_daily_limit", 30))))
+    target_limit = limit if limit is not None else platform_threshold
+    run_success_limit = min(target_limit, int(profile.stop_after_n_applications or 100))
+    print(f"Uplers session starting (Platform threshold: {platform_threshold} | Applied today: {applied_today} | Target this run: {run_success_limit})")
 
     applied = 0
     

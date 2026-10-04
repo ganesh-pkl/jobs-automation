@@ -1,5 +1,5 @@
 """
-Multi-portal Job Application Runner (Naukri, LinkedIn, Hirist, Uplers, Instahyre, Foundit, Wellfound, Glassdoor/Indeed)
+Multi-portal Job Application Runner (Naukri, LinkedIn, Hirist, Uplers, Instahyre, Foundit, Wellfound, Glassdoor, Apna)
 
 Runs application bots sequentially or concurrently in parallel.
 Prevents duplicate applications and enforces daily application safety limits.
@@ -34,7 +34,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Multi-portal Job Application Pipeline Runner")
     parser.add_argument("--serial", action="store_true", help="Run sequentially one portal at a time")
-    parser.add_argument("--parallel", action="store_true", default=True, help="Run all 8 portals in parallel (default)")
+    parser.add_argument("--parallel", action="store_true", default=True, help="Run all 9 portals in parallel (default)")
     args = parser.parse_args()
 
     from daily_pipeline import run_pipeline, run_parallel

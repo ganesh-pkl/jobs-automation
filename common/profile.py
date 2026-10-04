@@ -5,10 +5,24 @@ from pathlib import Path
 
 class Profile:
     LLM_CONTEXT_FIELDS = (
+        "first_name",
+        "last_name",
+        "full_name",
         "total_experience_years",
         "current_title_official",
         "current_title_functional",
+        "current_employer",
         "highest_qualification",
+        "school_name",
+        "degree_name",
+        "field_of_study",
+        "graduation_year",
+        "education_start_year",
+        "education_end_year",
+        "current_city",
+        "state_province",
+        "country_name",
+        "postal_code",
         "certifications",
         "skills_primary",
         "skills_adjacent",
@@ -67,7 +81,7 @@ class Profile:
         for key in ("stop_after_n_applications", "stop_after_n_attempts", "daily_application_limit",
                     "max_pages_per_role", "human_input_timeout_seconds", "job_freshness_days",
                     "naukri_daily_limit", "linkedin_daily_limit", "foundit_daily_limit", "wellfound_daily_limit",
-                    "glassdoor_daily_limit", "max_applicants"):
+                    "glassdoor_daily_limit", "apna_daily_limit", "max_applicants"):
             if key in data:
                 value = data[key]
                 if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -91,7 +105,7 @@ class Profile:
                     "seniority_floor_years": 0, "seniority_ceiling_years": 5,
                     "job_freshness_days": 1, "stop_after_n_applications": 100, "ctc_disclosure_policy": "negotiable",
                     "naukri_daily_limit": 40, "linkedin_daily_limit": 15, "foundit_daily_limit": 30, "wellfound_daily_limit": 25,
-                    "glassdoor_daily_limit": 25}
+                    "glassdoor_daily_limit": 15, "apna_daily_limit": 25}
         for key, value in defaults.items():
             data.setdefault(key, value)
         if data.get("browser_mode", "visible") not in {"visible", "minimized", "headless"}:
@@ -113,21 +127,46 @@ class Profile:
     def answer_library(self) -> dict:
         """Common recurring screening-question answers, pre-computed once."""
         d = self.data
+        skills_list = d.get("skills_primary", []) + d.get("skills_adjacent", [])
         return {
-            "years_experience": str(d["total_experience_years"]),
+            "first_name": d.get("first_name", "Ganesh"),
+            "last_name": d.get("last_name", "Pirikirala"),
+            "full_name": d.get("full_name", f"{d.get('first_name', 'Ganesh')} {d.get('last_name', 'Pirikirala')}").strip(),
+            "dob": d.get("dob", d.get("date_of_birth", "15/08/2001")),
+            "date_of_birth": d.get("date_of_birth", d.get("dob", "15/08/2001")),
+            "email": d.get("email", d.get("email_address", "ganesh.pkl08@gmail.com")),
+            "phone": str(d.get("mobile_number", d.get("phone", "7659869814"))),
+            "mobile_number": str(d.get("mobile_number", d.get("phone", "7659869814"))),
+            "years_experience": str(d.get("total_experience_years", 3)),
             "notice_period": (
                 "Immediately available" if d.get("immediately_available")
-                else f"{d['notice_period_days']} days"
+                else f"{d.get('notice_period_days', 0)} days"
             ),
             "current_ctc": (
-                "Prefer to discuss" if d["ctc_disclosure_policy"] == "negotiable"
-                else f"{d['current_ctc_lpa']} LPA"
+                "Prefer to discuss" if d.get("ctc_disclosure_policy") == "negotiable"
+                else f"{d.get('current_ctc_lpa', 6)} LPA"
             ),
             "expected_ctc": (
-                "Negotiable" if d["ctc_disclosure_policy"] == "negotiable"
-                else f"{d['expected_ctc_lpa']} LPA"
+                "Negotiable" if d.get("ctc_disclosure_policy") == "negotiable"
+                else f"{d.get('expected_ctc_lpa', 9)} LPA"
             ),
-            "current_city": d["current_city"],
+            "current_city": d.get("current_city", "Hyderabad"),
+            "full_location": f"{d.get('current_city', 'Hyderabad')}, {d.get('state_province', 'Telangana')}, {d.get('country_name', 'India')}",
+            "state_province": d.get("state_province", "Telangana"),
+            "country_name": d.get("country_name", "India"),
+            "postal_code": str(d.get("postal_code", "500072")),
+            "school_name": d.get("school_name", "Chaitanya Bharathi Institute of Technology"),
+            "degree_name": d.get("degree_name", "Bachelor of Technology"),
+            "highest_qualification": d.get("highest_qualification", "B.Tech in Electronics and Communication Engineering, Chaitanya Bharathi Institute of Technology"),
+            "field_of_study": d.get("field_of_study", "Electronics and Communication Engineering"),
+            "graduation_year": str(d.get("graduation_year", 2023)),
+            "passout_year": str(d.get("passout_year", 2023)),
+            "education_start_year": str(d.get("education_start_year", 2019)),
+            "education_end_year": str(d.get("education_end_year", 2023)),
+            "current_job_title": d.get("current_title_official", "Full-Stack Software Developer"),
+            "current_employer": d.get("current_employer", "Cognitivo"),
+            "gender": d.get("gender", "Male"),
+            "skills_csv": ", ".join(skills_list[:8]) if skills_list else "Java, Spring Boot, React.js, Node.js, TypeScript, JavaScript, REST APIs, MySQL",
             "relocate": "Yes" if d.get("relocate_cities") else "No",
             "night_shift": "Yes" if d.get("night_shift_ok") else "No",
             "weekend_work": "Yes" if d.get("weekend_ok") else "No",

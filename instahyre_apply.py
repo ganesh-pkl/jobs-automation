@@ -410,8 +410,9 @@ def run(target_role: str | None = None, limit: int | None = None):
         print("  python login_capture.py instahyre\n")
         return
 
-    # Maximum applications target (supports high volume up to 100)
-    target_applications = limit if limit is not None else int(profile.data.get("daily_application_limit", 100))
+    # Maximum applications target per run
+    platform_threshold = int(profile.data.get("instahyre_limit", profile.data.get("instahyre_run_limit", profile.data.get("instahyre_daily_limit", profile.stop_after_n_applications or 100))))
+    target_applications = limit if limit is not None else min(platform_threshold, int(profile.stop_after_n_applications or 100))
     applied = 0
     max_exp_ceiling = profile.seniority_ceiling_years or 4
 

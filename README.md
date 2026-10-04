@@ -1,6 +1,6 @@
 # Multi-Platform Daily Job Application Pipeline
 
-An automated, intelligent daily job application pipeline that searches, matches, auto-fills screening questionnaires via AI, and applies across **Naukri**, **LinkedIn**, **Hirist**, **Foundit** (Monster), **Wellfound** (AngelList), **Glassdoor / Indeed**, **Uplers**, and **Instahyre**.
+An automated, intelligent daily job application pipeline that searches, matches, auto-fills screening questionnaires via AI, and applies across **Naukri**, **LinkedIn**, **Hirist**, **Foundit** (Monster), **Wellfound** (AngelList), **Glassdoor** (Indeed SmartApply), **Apna**, **Uplers**, and **Instahyre**.
 
 Designed to run **once every morning** as an autonomous daily workflow with persistent duplicate prevention and an actionable external application queue.
 
@@ -22,10 +22,11 @@ Designed to run **once every morning** as an autonomous daily workflow with pers
     • Tracks historical counts                            • No duplicates / No applied jobs
 ```
 
-### 1. 8-in-1 Platform Support
+### 1. 9-in-1 Platform Support
 * **Naukri**: Searches fresh jobs, applies directly, handles multi-turn chatbot screening drawers, and extracts external links.
 * **LinkedIn**: Scans Easy Apply postings, navigates multi-step modals (`Contact Info` ➔ `Screening Questions` ➔ `Review` ➔ `Submit`), and collects external ATS openings.
-* **Glassdoor / Indeed**: Automatically searches Glassdoor Easy Apply roles, seamlessly navigates the **Indeed SmartApply** multi-step engine (`resume-selection` ➔ `questions` ➔ `review` ➔ `submit`), auto-answers questions, and logs submissions.
+* **Glassdoor**: Automatically searches Glassdoor Easy Apply roles, seamlessly navigates the **Indeed SmartApply** multi-step engine (`resume-selection` ➔ `questions` ➔ `review` ➔ `submit`), auto-answers questions, and logs submissions.
+* **Apna**: Filters relevant jobs using UI sidebar controls (Date posted: Last 24h / 3 days, Work from home, Full-time, IT Department), evaluates experience/salary badges, auto-answers screening questions, and submits applications directly.
 * **Hirist.tech**: Evaluates fresh tech openings, navigates `/screening` questionnaires, auto-selects radio choices, and logs company careers links.
 * **Foundit (Monster)**: Searches targeted keyword/role queries, evaluates experience and freshness filters, handles Quick Apply / Apply Now modals, and logs external careers links.
 * **Wellfound (AngelList)**: Filters direct 1-click startup roles, evaluates match criteria, crafts tailored recruiter pitch notes via LLM, and submits applications directly.
@@ -82,6 +83,7 @@ playwright install chromium
    python login_capture.py foundit
    python login_capture.py wellfound
    python login_capture.py glassdoor
+   python login_capture.py apna
    python login_capture.py uplers
    python login_capture.py instahyre
    ```
@@ -93,7 +95,7 @@ playwright install chromium
 
 ### Daily Morning Run (Recommended)
 
-Run the full 8-platform pipeline every morning with a single command:
+Run the full 9-platform pipeline every morning with a single command:
 
 ```bash
 python daily_pipeline.py
@@ -108,6 +110,7 @@ python run_all.py
 You can also run any platform independently:
 
 ```bash
+python apna_apply.py        # Run Apna automation
 python glassdoor_apply.py   # Run Glassdoor & Indeed SmartApply
 python wellfound_apply.py   # Run Wellfound automation
 python hirist_apply.py      # Run Hirist automation

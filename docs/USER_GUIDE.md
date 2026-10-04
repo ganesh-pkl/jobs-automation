@@ -73,7 +73,8 @@ Use `.\.venv\Scripts\python.exe` for all later Python commands. This avoids Powe
 | `salary_floor_lpa` | Optional numeric salary threshold; null disables it. Unknown salary may still pass. |
 | `stop_after_n_applications` | Maximum confirmed applications per run. |
 | `stop_after_n_attempts` | Maximum counted Apply clicks per run. Keep low initially. |
-| `daily_application_limit` | Confirmed applications allowed per local calendar day based on the log. |
+| `daily_application_limit` | Confirmed applications allowed per local calendar day across all platforms. |
+| `glassdoor_daily_limit`, `apna_daily_limit` | Safe confirmed application caps for Glassdoor (15) and Apna (25). |
 | `min_delay_seconds_between_applications`, `max_delay_seconds_between_applications` | Non-negative delay bounds; minimum must not exceed maximum. Preserve the example pacing initially. |
 | `human_input_timeout_seconds` | Positive whole seconds to wait for a manual answer. No answer skips the listing. |
 | `max_pages_per_role` | Positive whole number; use 1 for initial preview. |

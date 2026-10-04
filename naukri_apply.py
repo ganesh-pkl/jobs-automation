@@ -52,10 +52,59 @@ SENSITIVE_FIELD_HINTS = [
 # key.split("_")[0] logic got wrong -- it reduced both to "current" and
 # whichever key came first in the dict won, regardless of what was asked.
 TRIGGER_PHRASES = {
-    "notice_period": ["notice period"],
-    "current_ctc": ["current ctc", "current salary", "current compensation", "present ctc", "present salary"],
-    "expected_ctc": ["expected ctc", "expected salary", "expected compensation"],
-    "current_city": ["current city", "current location", "which city", "current place"],
+    "first_name": ["first name", "given name", "forename"],
+    "last_name": ["last name", "family name", "surname"],
+    "full_name": ["full name", "your name", "candidate name", "applicant name"],
+    "dob": ["date of birth", "dob", "birth date", "birthdate", "d.o.b"],
+    "email": ["email address", "email id", "e-mail", "email"],
+    "phone": ["mobile number", "phone number", "contact number", "mobile", "phone"],
+    "graduation_year": [
+        "graduation year", "year of graduation", "passing year", "year of passing",
+        "passout year", "pass out year", "completion year", "year of completion",
+        "year graduated", "graduated in", "passing out year", "year of pass", "end year",
+        "graduation date", "completion date",
+    ],
+    "education_start_year": [
+        "start year", "starting year", "year of joining", "commencement year", "start date",
+    ],
+    "school_name": [
+        "school name", "college name", "university name", "institute name", "institution name",
+        "school or university", "name of school", "name of college", "name of university",
+        "name of institute", "alma mater", "school", "university", "college", "institute", "institution",
+    ],
+    "degree_name": [
+        "degree name", "qualification held", "highest qualification held", "highest qualification",
+        "education level", "highest degree", "highest level of education", "degree",
+    ],
+    "field_of_study": [
+        "field of study", "major", "specialization", "branch", "stream", "discipline", "department", "course",
+    ],
+    "postal_code": [
+        "zip/postal code", "postal code", "zip code", "pin code", "pincode", "zip",
+    ],
+    "state_province": [
+        "state/province", "state", "province",
+    ],
+    "country_name": [
+        "country of residence", "nationality", "country",
+    ],
+    "current_job_title": [
+        "current job title", "current title", "current designation", "present title",
+        "present designation", "official title", "job title", "designation",
+    ],
+    "current_employer": [
+        "current employer", "current company", "present employer", "present company",
+    ],
+    "skills_csv": [
+        "skill set", "technical skills", "primary skills", "key skills",
+    ],
+    "gender": [
+        "gender", "sex",
+    ],
+    "notice_period": ["notice period", "notice", "joining time", "how soon"],
+    "current_ctc": ["current ctc", "current salary", "current compensation", "present ctc", "present salary", "current pay"],
+    "expected_ctc": ["expected ctc", "expected salary", "expected compensation", "desired ctc", "expectation"],
+    "current_city": ["current city", "current location", "which city", "current place", "located in", "base location", "city"],
     "relocate": ["relocate", "relocation", "willing to move"],
     "night_shift": ["night shift"],
     "weekend_work": ["weekend"],
@@ -67,6 +116,10 @@ TOTAL_EXPERIENCE_PHRASES = (
     "total years of experience",
     "overall years of experience",
     "professional experience",
+    "years of experience",
+    "experience in years",
+    "work experience",
+    "how many years of experience",
 )
 
 
@@ -346,15 +399,20 @@ def _wait_send_enabled(page, timeout_ms: int = 4000) -> bool:
 
 
 def _js_click_send(page) -> bool:
-    """Clicks Naukri's screening-chat Send/Save control -- a <div class="sendMsg">,
-    not a <button>. A JS click bypasses the chatbot_Overlay div that sits
-    visually on top of it and blocks Playwright's normal .click()."""
+    """Clicks Naukri's screening-chat Send/Save control or dispatches Enter event."""
     return safe_evaluate(page, """
         () => {
-            const el = document.querySelector('.sendMsg');
-            if (!el) return false;
-            el.click();
-            return true;
+            const sendBtn = document.querySelector('.sendMsg, [class*="sendMsg"], button[class*="send"], .chatbot_Send, [aria-label="Send"], button.send-btn, [class*="sendButton"]');
+            if (sendBtn) {
+                sendBtn.click();
+                return true;
+            }
+            const ed = document.querySelector('[id^="userInput"], [contenteditable="true"], input[type="text"], textarea');
+            if (ed) {
+                ed.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true}));
+                return true;
+            }
+            return false;
         }
     """, default=False)
 
@@ -561,12 +619,75 @@ def _is_sensitive_field(question: str) -> bool:
 def _direct_profile_answer(question: str, answers: dict) -> str | None:
     """Answer only questions that unambiguously map to a profile fact."""
     lower_q = " ".join(question.lower().split())
+
+    # 1. Check Name and Contact fields
+    for phrase in TRIGGER_PHRASES["first_name"]:
+        if phrase in lower_q:
+            return str(answers.get("first_name", "Ganesh"))
+
+    for phrase in TRIGGER_PHRASES["last_name"]:
+        if phrase in lower_q:
+            return str(answers.get("last_name", "Pirikirala"))
+
+    for phrase in TRIGGER_PHRASES["full_name"]:
+        if phrase in lower_q:
+            return str(answers.get("full_name", "Ganesh Pirikirala"))
+
+    for phrase in TRIGGER_PHRASES["dob"]:
+        if phrase in lower_q:
+            return str(answers.get("dob", answers.get("date_of_birth", "15/08/2001")))
+
+    for phrase in TRIGGER_PHRASES["email"]:
+        if phrase in lower_q:
+            return str(answers.get("email", "ganesh.pkl08@gmail.com"))
+
+    for phrase in TRIGGER_PHRASES["phone"]:
+        if phrase in lower_q:
+            return str(answers.get("phone", "7659869814"))
+
+    # 2. Check Graduation / Education Years FIRST so "graduation year" is never mistaken for experience years
+    for phrase in TRIGGER_PHRASES["graduation_year"]:
+        if phrase in lower_q:
+            return str(answers.get("graduation_year", "2023"))
+
+    for phrase in TRIGGER_PHRASES["education_start_year"]:
+        if phrase in lower_q:
+            return str(answers.get("education_start_year", "2019"))
+
+    # 3. Check School / University / College Name
+    for phrase in TRIGGER_PHRASES["school_name"]:
+        if phrase in lower_q and not any(w in lower_q for w in ("degree", "grade", "gpa", "percentage", "cgpa")):
+            return str(answers.get("school_name", "Chaitanya Bharathi Institute of Technology"))
+
+    # 4. Check Degree & Field of Study
+    for phrase in TRIGGER_PHRASES["field_of_study"]:
+        if phrase in lower_q:
+            return str(answers.get("field_of_study", "Electronics and Communication Engineering"))
+
+    for phrase in TRIGGER_PHRASES["degree_name"]:
+        if phrase in lower_q:
+            return str(answers.get("degree_name", "Bachelor of Technology"))
+
+    # 5. Check Location & Postal fields
+    for phrase in TRIGGER_PHRASES["postal_code"]:
+        if phrase in lower_q:
+            return str(answers.get("postal_code", "500072"))
+
+    for phrase in TRIGGER_PHRASES["state_province"]:
+        if phrase in lower_q:
+            return str(answers.get("state_province", "Telangana"))
+
+    for phrase in TRIGGER_PHRASES["country_name"]:
+        if phrase in lower_q:
+            return str(answers.get("country_name", "India"))
+
+    # 6. Check Experience fields
     asks_skill_specific_experience = bool(
         re.search(
-            r"\b(?:experience|years?)\b[^?]{0,80}\b(?:in|with|using|on)\b",
+            r"\b(?:experience|years?)\b[^?]{0,80}\b(?:in|with|using|on)\s+(?!years?\b|yrs?\b|months?\b)[a-z0-9#+.]+",
             lower_q,
         )
-        or re.search(r"\byears?\s+of\s+[^?]+\s+experience\b", lower_q)
+        or re.search(r"\byears?\s+of\s+(?!experience\b)[a-z0-9#+.]+\s+experience\b", lower_q)
     )
     if asks_skill_specific_experience:
         try:
@@ -739,16 +860,12 @@ def _is_completion_message(text: str) -> bool:
 
 
 def _has_answerable_input(page, timeout_ms: int = 3000) -> bool:
-    """Checks for a text box or radio/checkbox to answer. Polls for up to
-    timeout_ms instead of checking once -- the previous single-check version
-    could wrongly conclude "nothing to answer" if the next question's input
-    just hadn't rendered yet after the previous Save click, causing it to
-    skip clicking Save on what was actually still a real question."""
+    """Checks for a text box, textarea, or radio/checkbox to answer."""
     waited = 0
     step = 300
     while waited <= timeout_ms:
         found = safe_evaluate(page, """
-            () => !!(document.querySelector('[id^="userInput"], [contenteditable="true"]') ||
+            () => !!(document.querySelector('[id^="userInput"], [contenteditable="true"], input[type="text"], input[placeholder*="message" i], textarea, .chat-input, [class*="inputBox"]') ||
                      document.querySelector(
                          'input[type=radio], input[type=checkbox], input[type=file]'
                      ))
@@ -763,18 +880,16 @@ def _has_answerable_input(page, timeout_ms: int = 3000) -> bool:
 def _read_filled_text(page) -> str:
     return safe_evaluate(page, """
         () => {
-            const ed = document.querySelector('[id^="userInput"], [contenteditable="true"]');
-            return ed ? (ed.innerText || ed.textContent || '').trim() : '';
+            const ed = document.querySelector('[id^="userInput"], [contenteditable="true"], input[type="text"], input[placeholder*="message" i], textarea, .chat-input, [class*="inputBox"]');
+            if (!ed) return '';
+            return (ed.value || ed.innerText || ed.textContent || '').trim();
         }
     """, default="") or ""
 
 
 def _fill_and_send(page, text: str, question: str):
     """Fills the answer box, VERIFIES the text actually landed before
-    clicking Send, then sends. This is the fix for answers going through
-    blank: previously Send could fire even if the fill silently failed
-    (a timing hiccup, or the box wasn't there), which is what produces
-    Naukri's "incomplete information" rejection on the final application."""
+    clicking Send, then sends."""
     _fill_freetext(page, text)
     time.sleep(0.4)
     filled = _read_filled_text(page)
@@ -793,12 +908,9 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
     """Handles Naukri's post-apply screening chat drawer, if it appears."""
     answers = profile.answer_library()
     try:
-        # Broadened on purpose: a pure radio/checkbox question has no text
-        # box at all, so waiting only for contenteditable was causing the
-        # function to give up immediately on those questions, thinking
-        # there was no screening chat when there actually was one.
         page.wait_for_selector(
             '[contenteditable="true"], [contenteditable=""], '
+            'input[type=text], input[placeholder*="message" i], textarea, '
             'input[type=radio], input[type=checkbox], input[type=file]',
             timeout=30000,
         )
@@ -810,7 +922,7 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
         if stop:
             raise StopRun(f"stop signal during screening chat: {stop}")
 
-        bubbles = page.query_selector_all('.botMsg')
+        bubbles = page.query_selector_all('.botMsg, [class*="botMsg"], [class*="botMessage"], [class*="msgContainer"], .msg-text, [class*="chatbot"] p')
         if not bubbles:
             break
         try:
@@ -843,7 +955,6 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
             time.sleep(2.0)
             continue
 
-
         if _should_skip_question(question, profile):
             if not _click_skip_question(page):
                 raise SkipJob(
@@ -854,6 +965,11 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
             continue
 
         if _is_sensitive_field(question):
+            direct_ans = _direct_profile_answer(question, answers)
+            if direct_ans is not None:
+                _fill_and_send(page, direct_ans, question)
+                time.sleep(2.0)
+                continue
             response = ask_user(
                 f"Screening question (personal detail):\n{question}",
                 timeout_seconds=timeout_s,
@@ -904,10 +1020,21 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
 def _fill_freetext(page, text: str):
     safe_evaluate(page, """
         (text) => {
-            const ed = document.querySelector('[id^="userInput"], [contenteditable="true"]');
+            const ed = document.querySelector('[id^="userInput"], [contenteditable="true"], input[type="text"], input[placeholder*="message" i], textarea, .chat-input, [class*="inputBox"]');
             if (!ed) return;
             ed.focus();
-            document.execCommand('insertText', false, text);
+            if (ed.tagName === 'INPUT' || ed.tagName === 'TEXTAREA') {
+                let proto = window.HTMLInputElement.prototype;
+                if (ed.tagName === 'TEXTAREA') proto = window.HTMLTextAreaElement.prototype;
+                const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                if (setter) setter.call(ed, text);
+                else ed.value = text;
+                ed.dispatchEvent(new Event('input', {bubbles: true}));
+                ed.dispatchEvent(new Event('change', {bubbles: true}));
+            } else {
+                document.execCommand('selectAll', false, null);
+                document.execCommand('insertText', false, text);
+            }
         }
     """, arg=text)
 
@@ -962,22 +1089,16 @@ def run(preview: bool = False, limit: int | None = None):
 
     human_timeout = profile.data.get("human_input_timeout_seconds", 120)
     max_pages = profile.data.get("max_pages_per_role", 8)
-    naukri_daily_limit = int(profile.data.get("naukri_daily_limit", profile.data.get("daily_application_limit", 40)))
     applied_today = count_applications_today()
-    remaining_today = max(0, naukri_daily_limit - applied_today)
-    target_limit = limit if limit is not None else profile.stop_after_n_applications
-    run_success_limit = min(target_limit, remaining_today)
+    platform_threshold = int(profile.data.get("naukri_limit", profile.data.get("naukri_run_limit", profile.data.get("naukri_daily_limit", 40))))
+    target_limit = limit if limit is not None else platform_threshold
+    run_success_limit = min(target_limit, int(profile.stop_after_n_applications or 100))
+    if preview:
+        run_success_limit = target_limit
     max_attempts = profile.data.get(
         "stop_after_n_attempts", max(50, run_success_limit * 3)
     )
-    if preview:
-        run_success_limit = target_limit
-    if run_success_limit <= 0:
-        print(
-            f"Naukri safe daily application limit reached ({applied_today}/{naukri_daily_limit}). "
-            "No applications were attempted."
-        )
-        return
+    print(f"Naukri session starting (Platform threshold: {platform_threshold} | Applied today: {applied_today} | Target this run: {run_success_limit})")
 
     applied = 0
     attempted = 0
@@ -1153,4 +1274,9 @@ def run(preview: bool = False, limit: int | None = None):
 
 
 if __name__ == "__main__":
-    run()
+    import argparse
+    parser = argparse.ArgumentParser(description="Naukri Apply Bot")
+    parser.add_argument("--limit", type=int, default=None, help="Application limit for this run")
+    parser.add_argument("--preview", action="store_true", help="Preview matches without applying")
+    args, _ = parser.parse_known_args()
+    run(preview=args.preview, limit=args.limit)
