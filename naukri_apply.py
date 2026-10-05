@@ -366,9 +366,9 @@ def enumerate_cards(page):
 
 def check_apply_button(page) -> str:
     """Returns 'external', 'native', or 'none' based on the detail page's apply button."""
-    if page.query_selector('#company-site-button'):
+    if page.query_selector('#company-site-button, a[class*="company-site-button"]'):
         return "external"
-    if page.query_selector('#apply-button'):
+    if page.query_selector('#apply-button, .styles_apply-button__uJI3A, .apply-button, button:has-text("Apply")'):
         return "native"
     return "none"
 
@@ -418,14 +418,40 @@ def _js_click_send(page) -> bool:
 
 
 def click_native_apply(page) -> bool:
-    """Clicks the Apply button and returns whether the click actually
-    registered, so the caller can tell 'click failed' apart from 'clicked
-    fine, just couldn't confirm success afterward' -- those need different
-    handling."""
+    """Clicks the visible Apply button using Playwright locator and JS fallback."""
+    time.sleep(random.uniform(0.4, 0.8))
+    
+    # 1. First attempt: Playwright locator with real user pointer events
+    try:
+        loc = page.locator('button#apply-button:visible, button.styles_apply-button__uJI3A:visible, button.apply-button:visible, #apply-button:visible, button:has-text("Apply"):visible').first
+        if loc.count() > 0 and loc.is_visible(timeout=1000):
+            loc.scroll_into_view_if_needed()
+            time.sleep(random.uniform(0.3, 0.5))
+            loc.click(timeout=3000)
+            return True
+    except Exception:
+        pass
+
+    # 2. Second attempt: JavaScript synthetic event dispatch on the visible button
     return bool(safe_evaluate(page, """
         () => {
-            const btn = document.getElementById('apply-button');
-            if (btn) { btn.click(); return true; }
+            const btns = Array.from(document.querySelectorAll('#apply-button, .apply-button, button.styles_apply-button__uJI3A, button'));
+            const applyBtn = btns.find(b => {
+                const t = (b.innerText || '').trim().toLowerCase();
+                const id = (b.id || '').toLowerCase();
+                const cls = (b.className || '').toLowerCase();
+                const isApplyText = t === 'apply' || t.startsWith('apply on') || t === 'apply now';
+                const isVisible = b.offsetParent !== null;
+                return (id === 'apply-button' || cls.includes('apply-button') || isApplyText) && isVisible;
+            }) || document.getElementById('apply-button');
+
+            if (applyBtn) {
+                applyBtn.scrollIntoView({ behavior: 'instant', block: 'center' });
+                applyBtn.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, view: window}));
+                applyBtn.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, view: window}));
+                applyBtn.click();
+                return true;
+            }
             return false;
         }
     """, default=False))
@@ -472,34 +498,58 @@ def _is_application_confirmation(body_text: str, apply_label: str = "") -> bool:
     """Return True only for explicit application-success states."""
     text = " ".join((body_text or "").lower().split())
     label = " ".join((apply_label or "").lower().split())
-    if label in {"applied", "already applied"}:
+    if label in {"applied", "already applied"} or "applied" in label:
         return True
     success_patterns = (
         r'\bsuccessfully applied\b',
         r'\bapplication (?:has been )?sent\b',
-        r'\byou have applied\b',
-        r'\bapplication submitted\b',
-        r'\bapplied to\s+["“][^"”]+["”]',
+        r'\byou have (?:already )?applied\b',
+        r'\bapplication (?:has been )?submitted\b',
+        r'\bapplied to\b',
+        r'\bthank you for applying\b',
         r'\bthank you for your responses?\b',
+        r'\bresponses? (?:have|has) been recorded\b',
     )
     return any(re.search(pattern, text) for pattern in success_patterns)
 
 
 def verify_applied(page) -> bool:
-    """Best-effort check that the application actually went through. Confirmed
-    real pattern: Naukri shows a green checkmark panel reading
-    'Applied to "<job title>"' a few seconds after submit -- checking for
-    that prefix specifically, plus a short wait since it isn't instant."""
-    try:
-        page.wait_for_timeout(3000)  # the confirmation panel takes a moment to appear
-    except Exception:
-        pass
+    """Best-effort check that the application actually went through."""
+    for _ in range(5):  # Poll over ~3-4 seconds for UI confirmation
+        time.sleep(0.6)
+        is_done = safe_evaluate(page, """
+            () => {
+                const bodyText = (document.body.innerText || '').toLowerCase();
+                const hasConfirmText = bodyText.includes('successfully applied') ||
+                                       bodyText.includes('application sent') ||
+                                       bodyText.includes('application has been sent') ||
+                                       bodyText.includes('you have applied') ||
+                                       bodyText.includes('application submitted') ||
+                                       bodyText.includes('applied to') ||
+                                       bodyText.includes('thank you for applying') ||
+                                       bodyText.includes('thank you for your response');
+
+                const btns = Array.from(document.querySelectorAll('#apply-button, .apply-button, button.styles_apply-button__uJI3A, button'));
+                const hasAppliedBtn = btns.some(b => {
+                    const t = (b.innerText || '').trim().toLowerCase();
+                    return t === 'applied' || t === 'already applied';
+                });
+
+                const hasBadge = !!document.querySelector('.applied-badge, [class*="applied-badge"], [class*="apply-success"]');
+
+                return hasConfirmText || hasAppliedBtn || hasBadge;
+            }
+        """, default=False)
+        if is_done:
+            return True
+
+    text = ""
     try:
         text = page.inner_text("body").lower()
     except Exception:
-        return False
+        pass
     label = ""
-    btn = page.query_selector('#apply-button')
+    btn = page.query_selector('#apply-button, .styles_apply-button__uJI3A, .apply-button')
     if btn:
         try:
             label = btn.inner_text()
@@ -909,10 +959,8 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
     answers = profile.answer_library()
     try:
         page.wait_for_selector(
-            '[contenteditable="true"], [contenteditable=""], '
-            'input[type=text], input[placeholder*="message" i], textarea, '
-            'input[type=radio], input[type=checkbox], input[type=file]',
-            timeout=30000,
+            '[class*="chatbot_Drawer"], [class*="chatbot"], [class*="botMsg"], .chat-container, [class*="chat-drawer"], [class*="drawer"]',
+            timeout=4000,
         )
     except PWTimeout:
         return  # no screening chat for this listing
