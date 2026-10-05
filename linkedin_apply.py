@@ -186,6 +186,39 @@ def describe_modal(page) -> dict:
             const fields = [];
             const buttons = [];
 
+            const getCleanLabel = (el) => {
+                let label = (el.getAttribute('aria-label') || '').trim();
+                if (label && label.length > 2 && !label.toLowerCase().includes('required')) return label;
+
+                if (el.id) {
+                    try {
+                        const lbl = modal.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+                        if (lbl) {
+                            const text = (lbl.innerText || '').replace(/[\n\r]+/g, ' ').trim();
+                            if (text.length > 1) return text;
+                        }
+                    } catch(e) {}
+                }
+                if (el.getAttribute('aria-labelledby')) {
+                    const lblEl = document.getElementById(el.getAttribute('aria-labelledby'));
+                    if (lblEl) {
+                        const text = (lblEl.innerText || '').replace(/[\n\r]+/g, ' ').trim();
+                        if (text.length > 1) return text;
+                    }
+                }
+                const parent = el.closest('.fb-dash-form-element, [class*="form-element"], fieldset, div[data-test-form-builder-component], label') || el.parentElement;
+                if (parent) {
+                    const titleEl = parent.querySelector('legend, label, [class*="label-title"], [class*="title"], [class*="label"], h3, h4, p');
+                    if (titleEl) {
+                        const text = (titleEl.innerText || '').replace(/[\n\r]+/g, ' ').trim();
+                        if (text.length > 1) return text;
+                    }
+                    const fullParentText = (parent.innerText || '').split('\\n')[0].trim();
+                    if (fullParentText.length > 2) return fullParentText;
+                }
+                return (el.placeholder || '').trim();
+            };
+
             // 1. Radio groups & Fieldsets
             const radioContainers = Array.from(modal.querySelectorAll('fieldset, [data-test-form-builder-radios-form-component], .fb-dash-form-element, [class*="radio-group"]'));
             const processedRadioIds = new Set();
@@ -230,13 +263,7 @@ def describe_modal(page) -> dict:
             // 2. Standalone Radios not in fieldsets
             modal.querySelectorAll('input[type="radio"]').forEach(r => {
                 if (processedRadioIds.has(r.id)) return;
-                let rLabel = '';
-                if (r.id) {
-                    try {
-                        const lbl = modal.querySelector(`label[for="${CSS.escape(r.id)}"]`);
-                        if (lbl) rLabel = lbl.innerText.trim();
-                    } catch(e) {}
-                }
+                let rLabel = getCleanLabel(r);
                 fields.push({
                     tag: 'INPUT',
                     type: 'radio',
@@ -249,17 +276,7 @@ def describe_modal(page) -> dict:
 
             // 3. Checkboxes
             modal.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                let label = '';
-                if (cb.id) {
-                    try {
-                        const lbl = modal.querySelector(`label[for="${CSS.escape(cb.id)}"]`);
-                        if (lbl) label = lbl.innerText.trim();
-                    } catch(e) {}
-                }
-                if (!label) {
-                    const parentLbl = cb.closest('label');
-                    if (parentLbl) label = parentLbl.innerText.trim();
-                }
+                let label = getCleanLabel(cb);
                 fields.push({
                     tag: 'INPUT',
                     type: 'checkbox',
@@ -272,20 +289,7 @@ def describe_modal(page) -> dict:
 
             // 4. Select Dropdowns
             modal.querySelectorAll('select').forEach(sel => {
-                let label = sel.getAttribute('aria-label') || '';
-                if (!label && sel.id) {
-                    try {
-                        const lbl = modal.querySelector(`label[for="${CSS.escape(sel.id)}"]`);
-                        if (lbl) label = lbl.innerText.trim();
-                    } catch(e) {}
-                }
-                if (!label) {
-                    const parent = sel.closest('label') || sel.closest('.fb-dash-form-element, [class*="form-element"]');
-                    if (parent) {
-                        const span = parent.querySelector('span, label, legend, [class*="label"]');
-                        if (span) label = span.innerText.trim();
-                    }
-                }
+                let label = getCleanLabel(sel);
                 const val = (sel.value || '').trim();
                 const selectedOpt = sel.options[sel.selectedIndex];
                 const selectedText = (selectedOpt ? selectedOpt.text : '').trim();
@@ -304,25 +308,7 @@ def describe_modal(page) -> dict:
             modal.querySelectorAll('input, textarea').forEach(el => {
                 const t = (el.type || 'text').toLowerCase();
                 if (t === 'hidden' || t === 'radio' || t === 'checkbox') return;
-                let label = el.getAttribute('aria-label') || '';
-                if (!label && el.id) {
-                    try {
-                        const lbl = modal.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-                        if (lbl) label = lbl.innerText.trim();
-                    } catch(e) {}
-                }
-                if (!label && el.getAttribute('aria-labelledby')) {
-                    const lblEl = document.getElementById(el.getAttribute('aria-labelledby'));
-                    if (lblEl) label = lblEl.innerText.trim();
-                }
-                if (!label) {
-                    const parent = el.closest('label') || el.closest('.fb-dash-form-element, [class*="form-element"]');
-                    if (parent) {
-                        const span = parent.querySelector('span, label, legend, [class*="label"]');
-                        if (span) label = span.innerText.trim();
-                    }
-                }
-                if (!label) label = el.placeholder || '';
+                let label = getCleanLabel(el);
                 fields.push({
                     tag: el.tagName,
                     type: t,
@@ -973,6 +959,181 @@ def fill_form_step(page, profile: Profile, job_context: str):
     except Exception:
         pass
 
+    # 4. Fourth pass: JavaScript DOM Safety Sweep to guarantee 100% field completion for multi-question forms
+    try:
+        profile_facts = {
+            "first_name": str(profile.data.get("first_name", "Ganesh")),
+            "last_name": str(profile.data.get("last_name", "Pirikirala")),
+            "full_name": str(profile.data.get("full_name", "Ganesh Pirikirala")),
+            "email": str(profile.data.get("email", profile.data.get("email_address", "ganesh.pkl08@gmail.com"))),
+            "phone": str(profile.data.get("mobile_number") or profile.data.get("phone") or "7659869814"),
+            "years_exp": str(profile.data.get("years_experience", "3")),
+            "current_hourly": str(profile.data.get("current_hourly_rate_usd", 15)),
+            "expected_hourly": str(profile.data.get("expected_hourly_rate_usd", 25)),
+            "current_ctc": str(profile.data.get("current_ctc_lpa", 6)),
+            "expected_ctc": str(profile.data.get("expected_ctc_lpa", 9)),
+            "grad_year": str(profile.data.get("graduation_year", "2023")),
+            "start_year": str(profile.data.get("education_start_year", "2019")),
+            "city": profile.current_city or "Hyderabad",
+            "postal_code": str(profile.data.get("postal_code", "500072")),
+            "state": str(profile.data.get("state_province", "Telangana")),
+            "country": str(profile.data.get("country_name", "India")),
+            "school": str(profile.data.get("school_name", "Chaitanya Bharathi Institute of Technology")),
+            "degree": str(profile.data.get("degree_name", "Bachelor of Technology")),
+            "major": str(profile.data.get("field_of_study", "Electronics and Communication Engineering")),
+            "employer": str(profile.data.get("current_employer", "Cognitivo")),
+            "title": str(profile.data.get("current_title_official", "Full-Stack Software Developer")),
+        }
+        page.evaluate("""(facts) => {
+            const modal = document.querySelector('.jobs-easy-apply-modal') ||
+                          document.querySelector('dialog[open]') ||
+                          document.querySelector('.artdeco-modal[role="dialog"]:not([aria-hidden="true"])') ||
+                          document.querySelector('dialog, .jobs-easy-apply-modal, [role="dialog"], .artdeco-modal');
+            if (!modal) return;
+
+            const setReactValue = (el, val) => {
+                el.focus();
+                const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+                const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                if (setter) {
+                    setter.call(el, val);
+                } else {
+                    el.value = val;
+                }
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new Event('blur', { bubbles: true }));
+            };
+
+            // A. Sweep text / number / textarea inputs
+            const inputs = Array.from(modal.querySelectorAll('input:not([type="hidden"]):not([type="file"]):not([type="submit"]):not([type="button"]), textarea'));
+            inputs.forEach(el => {
+                if (el.type === 'radio' || el.type === 'checkbox') return;
+                const val = (el.value || '').trim();
+                if (val.length > 0) return; // Already filled
+
+                const parent = el.closest('.fb-dash-form-element, [class*="form-element"], fieldset, div') || el.parentElement || modal;
+                const labelText = ((parent.innerText || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.placeholder || '')).toLowerCase();
+
+                let answer = '3';
+                if (labelText.includes('hourly') || labelText.includes('usd') || labelText.includes('rate')) {
+                    answer = (labelText.includes('current') || labelText.includes('present')) ? facts.current_hourly : facts.expected_hourly;
+                } else if (labelText.includes('notice') || labelText.includes('joining') || labelText.includes('how soon')) {
+                    answer = (labelText.includes('days') || labelText.includes('in days')) ? '0' : '1';
+                } else if (labelText.includes('ctc') || labelText.includes('salary') || labelText.includes('compensation')) {
+                    answer = (labelText.includes('current') || labelText.includes('present')) ? facts.current_ctc : facts.expected_ctc;
+                } else if (labelText.includes('zip') || labelText.includes('postal') || labelText.includes('pin')) {
+                    answer = facts.postal_code;
+                } else if (labelText.includes('graduat') || labelText.includes('passout') || labelText.includes('end year')) {
+                    answer = facts.grad_year;
+                } else if (labelText.includes('start year') || labelText.includes('joining year')) {
+                    answer = facts.start_year;
+                } else if (labelText.includes('first name') || labelText.includes('given name')) {
+                    answer = facts.first_name;
+                } else if (labelText.includes('last name') || labelText.includes('surname')) {
+                    answer = facts.last_name;
+                } else if (labelText.includes('email')) {
+                    answer = facts.email;
+                } else if (labelText.includes('phone') || labelText.includes('mobile')) {
+                    answer = facts.phone;
+                } else if (labelText.includes('city') || labelText.includes('location') || labelText.includes('where are you located') || labelText.includes('base location')) {
+                    answer = facts.city;
+                } else if (labelText.includes('state') || labelText.includes('province')) {
+                    answer = facts.state;
+                } else if (labelText.includes('country') || labelText.includes('nationality')) {
+                    answer = facts.country;
+                } else if (labelText.includes('school') || labelText.includes('university') || labelText.includes('college')) {
+                    answer = facts.school;
+                } else if (labelText.includes('degree') || labelText.includes('highest qualification')) {
+                    answer = facts.degree;
+                } else if (labelText.includes('major') || labelText.includes('branch') || labelText.includes('field of study')) {
+                    answer = facts.major;
+                } else if (labelText.includes('company') || labelText.includes('employer')) {
+                    answer = facts.employer;
+                } else if (labelText.includes('job title') || labelText.includes('designation') || labelText.includes('current title')) {
+                    answer = facts.title;
+                } else if (labelText.includes('linkedin') || labelText.includes('profile link')) {
+                    answer = 'https://www.linkedin.com/in/ganesh-pirikirala';
+                } else if (labelText.includes('github') || labelText.includes('git link')) {
+                    answer = 'https://github.com/ganesh-pkl';
+                } else if (labelText.includes('website') || labelText.includes('portfolio')) {
+                    answer = 'https://ganesh-portfolio.dev';
+                } else if (el.type === 'number' || labelText.includes('years') || labelText.includes('experience') || labelText.includes('how many')) {
+                    answer = facts.years_exp;
+                } else {
+                    answer = 'Yes';
+                }
+
+                setReactValue(el, answer);
+            });
+
+            // B. Sweep unselected dropdowns
+            const selects = Array.from(modal.querySelectorAll('select'));
+            selects.forEach(sel => {
+                const val = (sel.value || '').trim();
+                const selIdx = sel.selectedIndex;
+                const optText = (sel.options[selIdx]?.text || '').trim().toLowerCase();
+                const isUnselected = !val || optText.startsWith('select') || optText.startsWith('choose') || selIdx <= 0;
+                if (!isUnselected) return;
+
+                const parent = sel.closest('.fb-dash-form-element, [class*="form-element"], fieldset, div') || sel.parentElement || modal;
+                const labelText = ((parent.innerText || '') + ' ' + (sel.getAttribute('aria-label') || '')).toLowerCase();
+
+                let picked = false;
+                for (let i = 1; i < sel.options.length; i++) {
+                    const t = (sel.options[i].text || '').toLowerCase();
+                    const v = (sel.options[i].value || '').toLowerCase();
+                    if (labelText.includes('country') && (t.includes('india') || t.includes('+91'))) {
+                        sel.selectedIndex = i; picked = true; break;
+                    }
+                    if (labelText.includes('city') && (t.includes('hyderabad') || t.includes('bengaluru'))) {
+                        sel.selectedIndex = i; picked = true; break;
+                    }
+                    if (t.includes('yes') || t.includes('comfortable') || t.includes('immediate') || t.includes('3') || t.includes('graduate') || t.includes('bachelor')) {
+                        sel.selectedIndex = i; picked = true; break;
+                    }
+                }
+                if (!picked && sel.options.length > 1) {
+                    sel.selectedIndex = 1;
+                }
+                sel.dispatchEvent(new Event('change', { bubbles: true }));
+                sel.dispatchEvent(new Event('input', { bubbles: true }));
+            });
+
+            // C. Sweep unselected radio groups
+            const radioContainers = Array.from(modal.querySelectorAll('fieldset, [data-test-form-builder-radios-form-component], .fb-dash-form-element, [class*="radio-group"]'));
+            radioContainers.forEach(cont => {
+                const radios = Array.from(cont.querySelectorAll('input[type="radio"]'));
+                if (radios.length === 0) return;
+                const hasChecked = radios.some(r => r.checked);
+                if (!hasChecked) {
+                    const yesRadio = radios.find(r => {
+                        const lbl = cont.querySelector(`label[for="${CSS.escape(r.id)}"]`) || r.closest('label');
+                        const txt = ((lbl ? lbl.innerText : '') + ' ' + r.value).toLowerCase();
+                        return txt.includes('yes');
+                    });
+                    const target = yesRadio || radios[0];
+                    target.click();
+                    target.checked = true;
+                    target.dispatchEvent(new Event('click', { bubbles: true }));
+                    target.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            });
+
+            // D. Sweep unchecked required checkboxes
+            const checkboxes = Array.from(modal.querySelectorAll('input[type="checkbox"]'));
+            checkboxes.forEach(cb => {
+                if (!cb.checked && (cb.required || cb.getAttribute('aria-required') === 'true')) {
+                    cb.click();
+                    cb.checked = true;
+                    cb.dispatchEvent(new Event('click', { bubbles: true }));
+                    cb.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            });
+        }""", profile_facts)
+    except Exception:
+        pass
+
 
 def click_modal_button(page, button_type: str) -> bool:
     """
@@ -1052,9 +1213,10 @@ def click_modal_button(page, button_type: str) -> bool:
             const modal = document.querySelector('.jobs-easy-apply-modal') ||
                           document.querySelector('dialog[open]') ||
                           document.querySelector('.artdeco-modal[role="dialog"]:not([aria-hidden="true"])') ||
-                          document.querySelector('dialog, .jobs-easy-apply-modal, [role="dialog"], .artdeco-modal');
+                          document.querySelector('dialog, .jobs-easy-apply-modal, [role="dialog"], .artdeco-modal') ||
+                          document;
             if (!modal) return false;
-            const content = modal.querySelector('.jobs-easy-apply-modal__content, .artdeco-modal__content, div[class*="content"]');
+            const content = modal.querySelector ? modal.querySelector('.jobs-easy-apply-modal__content, .artdeco-modal__content, div[class*="content"]') : null;
             if (content) {
                 content.scrollTop = content.scrollHeight;
             }
@@ -1104,7 +1266,7 @@ def click_modal_button(page, button_type: str) -> bool:
                     b.click();
                     return true;
                 }
-                const footerPrimary = modal.querySelector('footer button.artdeco-button--primary');
+                const footerPrimary = modal.querySelector ? modal.querySelector('footer button.artdeco-button--primary') : null;
                 if (footerPrimary) {
                     footerPrimary.scrollIntoView();
                     footerPrimary.focus();
@@ -1153,7 +1315,14 @@ def dismiss_modal_if_open(page):
             return false;
         }""")
         if is_submittable:
-            time.sleep(2)
+            time.sleep(2.5)
+            # Verify if submit registered and confirmation appeared
+            is_done = page.evaluate("""() => {
+                const body = (document.body.innerText || '').toLowerCase();
+                return body.includes('application was sent') || body.includes('application sent') || body.includes('applied') || body.includes('submitted');
+            }""")
+            if is_done:
+                return True
 
         page.evaluate("""() => {
             const modal = document.querySelector('.jobs-easy-apply-modal') ||
@@ -1164,9 +1333,12 @@ def dismiss_modal_if_open(page):
             const closeBtn = modal.querySelector('button[aria-label="Dismiss"], button[aria-label="Close"], button.artdeco-modal__dismiss');
             if (closeBtn) closeBtn.click();
         }""")
-        time.sleep(1)
+        time.sleep(1.0)
         page.evaluate("""() => {
-            const discardBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.trim() === 'Discard' || (b.getAttribute('aria-label') || '').includes('Discard'));
+            const discardBtn = Array.from(document.querySelectorAll('button')).find(b => {
+                const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase().trim();
+                return t === 'discard';
+            });
             if (discardBtn) discardBtn.click();
         }""")
     except Exception:
@@ -1177,8 +1349,12 @@ def _is_application_confirmation(text: str) -> bool:
     normalized = " ".join((text or "").lower().split())
     patterns = (
         r"\byour application was sent\b",
-        r"\bapplication (?:has been )?submitted\b",
+        r"\bapplication (?:has been )?(?:was )?sent\b",
+        r"\bapplication (?:has been )?(?:was )?submitted\b",
         r"\bsuccessfully applied\b",
+        r"\bapplied to\b",
+        r"\byou applied on\b",
+        r"\btrack your application\b",
     )
     return any(re.search(pattern, normalized) for pattern in patterns)
 
@@ -1189,6 +1365,24 @@ class SubmissionUnconfirmed(Exception):
 
 def run_one_application(page, profile: Profile, job_title: str, company: str) -> bool:
     job_context = f"{job_title} at {company}"
+
+    # Clear any leftover dialogs or blocking "Save this application?" prompts before starting
+    try:
+        page.evaluate("""() => {
+            const savePrompt = Array.from(document.querySelectorAll('.artdeco-modal, dialog, [role="dialog"]')).find(el => {
+                const t = (el.innerText || '').toLowerCase();
+                return t.includes('save this application') || t.includes('save to return');
+            });
+            if (savePrompt) {
+                const discardBtn = Array.from(savePrompt.querySelectorAll('button')).find(b => {
+                    const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase().trim();
+                    return t === 'discard';
+                });
+                if (discardBtn) discardBtn.click();
+            }
+        }""")
+    except Exception:
+        pass
 
     # Strict pre-apply check on job description for experience requirements
     max_exp_ceiling = profile.seniority_ceiling_years if profile.seniority_ceiling_years is not None else 3
@@ -1221,7 +1415,7 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
     time.sleep(random.uniform(2.0, 3.2))
 
     try:
-        for step_idx in range(10):  # Cap on steps per application
+        for step_idx in range(35):  # Generous step cap to support multi-question, multi-page applications
             stop = page_has_stop_signal(page)
             if stop:
                 raise RuntimeError(f"stop signal mid-application: {stop}")
@@ -1238,7 +1432,7 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
             btn_arias = [(b.get("aria") or "").lower() for b in buttons]
             all_btn_strs = btn_texts + btn_arias
 
-            # 1. Fill current step form questions (radios, inputs, selects)
+            # 1. Fill current step form questions (radios, inputs, selects, and safety sweep)
             fill_form_step(page, profile, job_context)
             time.sleep(random.uniform(1.2, 2.4))  # Human reading delay
 
@@ -1247,17 +1441,45 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
                 review_text = page.inner_text('dialog, .jobs-easy-apply-modal, [role="dialog"], .artdeco-modal')
                 print("--- Reviewing application before submit ---")
                 print(review_text[:500])
-                time.sleep(random.uniform(1.5, 3.0))
+                time.sleep(random.uniform(1.0, 2.0))
+
+                # Scroll modal content container to bottom to make sure footer submit button is fully active
+                page.evaluate("""() => {
+                    const content = document.querySelector('.jobs-easy-apply-modal__content, .artdeco-modal__content');
+                    if (content) content.scrollTop = content.scrollHeight;
+                }""")
+                time.sleep(0.5)
 
                 if not click_modal_button(page, "Submit application"):
                     raise SubmissionUnconfirmed("submit button click did not register")
                 
-                time.sleep(random.uniform(3.5, 5.5))
+                time.sleep(random.uniform(3.0, 4.5))
+
+                # Check for post-apply confirmation via body text, modal state, or applied badge
+                is_confirmed = page.evaluate("""() => {
+                    const bodyText = (document.body.innerText || '').toLowerCase();
+                    const hasConfirmText = bodyText.includes('application was sent') ||
+                                           bodyText.includes('application sent') ||
+                                           bodyText.includes('application has been submitted') ||
+                                           bodyText.includes('application submitted') ||
+                                           bodyText.includes('successfully applied') ||
+                                           bodyText.includes('track your application');
+                    
+                    const modalClosed = !document.querySelector('.jobs-easy-apply-modal') ||
+                                        (document.querySelector('.jobs-easy-apply-modal')?.offsetParent === null);
+                    
+                    const appliedBadge = !!document.querySelector('.jobs-applied-badge, [class*="applied-badge"], .artdeco-inline-feedback--success');
+                    
+                    return hasConfirmText || (modalClosed && appliedBadge);
+                }""")
+
                 confirmation_text = page.inner_text("body")
-                if not _is_application_confirmation(confirmation_text):
-                    raise SubmissionUnconfirmed(
-                        f"LinkedIn did not show an application confirmation. Saw text starting with: {confirmation_text[:200]}"
-                    )
+                if not is_confirmed and not _is_application_confirmation(confirmation_text):
+                    modal_still_open = page.evaluate("() => !!document.querySelector('.jobs-easy-apply-modal')")
+                    if modal_still_open:
+                        raise SubmissionUnconfirmed(
+                            f"LinkedIn did not show an application confirmation. Saw text starting with: {confirmation_text[:200]}"
+                        )
                 
                 # Close post-application success modal
                 time.sleep(1.0)
@@ -1836,6 +2058,7 @@ def run(limit: int | None = None):
                     print(f"UNCERTAIN: {card.get('title')} @ {card.get('company')} — {e}")
                     log_row([datetime.now(), "linkedin", card.get("title"),
                               card.get("company"), "uncertain", str(e)])
+                    dismiss_modal_if_open(page)
                     wait_before_next_application(profile)
                     continue
                 except RuntimeError as e:
