@@ -210,13 +210,13 @@ def run_parallel():
     print(f"Uplers Safe Threshold (Per Run):                  {uplers_safe_limit}")
     print(f"Instahyre Safe Threshold (Per Run):               {instahyre_safe_limit}")
     print(f"Permanent Application History:                    {len(initial_applied_history)} jobs recorded")
-    print(f"Mode:                                             9 Platforms Running Concurrently")
+    print(f"Mode:                                             8 Platforms Running Concurrently (LinkedIn Paused)")
     print("=" * 65 + "\n")
 
     tasks = [
         ("Hirist", [sys.executable, "hirist_apply.py"]),
         ("Naukri", [sys.executable, "naukri_apply.py"]),
-        ("LinkedIn", [sys.executable, "linkedin_apply.py"]),
+        # ("LinkedIn", [sys.executable, "linkedin_apply.py"]),  # Paused: account safety warning
         ("Uplers", [sys.executable, "uplers_apply.py"]),
         ("Instahyre", [sys.executable, "instahyre_apply.py"]),
         ("Foundit", [sys.executable, "foundit_apply.py"]),
@@ -278,7 +278,7 @@ def run_pipeline():
     print("=" * 65)
     print(f"Target Total Applications (Per Run):              {total_target}")
     print(f"Naukri Safe Threshold (Per Run):                  {naukri_safe_limit}")
-    print(f"LinkedIn Safe Threshold (Per Run):                {linkedin_safe_limit}")
+    print(f"LinkedIn Safe Threshold (Per Run):                {linkedin_safe_limit} [PAUSED]")
     print(f"Foundit Safe Threshold (Per Run):                 {foundit_safe_limit}")
     print(f"Wellfound Safe Threshold (Per Run):               {wellfound_safe_limit}")
     print(f"Glassdoor Safe Threshold (Per Run):               {glassdoor_safe_limit}")
@@ -291,7 +291,7 @@ def run_pipeline():
     print("=" * 65 + "\n")
 
     # 1. Run Hirist
-    print(f">>> [1/9] Running Hirist Automation (Threshold: {hirist_safe_limit})...")
+    print(f">>> [1/8] Running Hirist Automation (Threshold: {hirist_safe_limit})...")
     try:
         import hirist_apply
         hirist_apply.run(limit=hirist_safe_limit)
@@ -299,20 +299,20 @@ def run_pipeline():
         print(f"  (Hirist execution note: {e})")
 
     # 2. Run Naukri
-    print(f"\n>>> [2/9] Running Naukri Automation (Threshold: {naukri_safe_limit})...")
+    print(f"\n>>> [2/8] Running Naukri Automation (Threshold: {naukri_safe_limit})...")
     try:
         import naukri_apply
         naukri_apply.run(limit=naukri_safe_limit)
     except Exception as e:
         print(f"  (Naukri execution note: {e})")
 
-    # 3. Run LinkedIn
-    print(f"\n>>> [3/9] Running LinkedIn Automation (Threshold: {linkedin_safe_limit})...")
-    try:
-        import linkedin_apply
-        linkedin_apply.run(limit=linkedin_safe_limit)
-    except Exception as e:
-        print(f"  (LinkedIn execution note: {e})")
+    # 3. LinkedIn is paused due to platform warning
+    # print(f"\n>>> [PAUSED] Skipping LinkedIn Automation...")
+    # try:
+    #     import linkedin_apply
+    #     linkedin_apply.run(limit=linkedin_safe_limit)
+    # except Exception as e:
+    #     print(f"  (LinkedIn execution note: {e})")
 
     # 4. Run Foundit
     print(f"\n>>> [4/9] Running Foundit Automation (Threshold: {foundit_safe_limit})...")

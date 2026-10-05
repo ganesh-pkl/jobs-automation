@@ -1636,6 +1636,9 @@ def build_linkedin_search_url(
 
 
 def run(limit: int | None = None):
+    print("\n⚠️  [PAUSED] LinkedIn automation is temporarily disabled to safeguard your account following a platform warning.")
+    print("   To re-enable in the future, remove the pause guard in linkedin_apply.py and daily_pipeline.py.\n")
+    return
     profile = Profile.load()
     if not Path(SESSION_FILE).exists():
         raise SystemExit(f"{SESSION_FILE} not found. Run: python login_capture.py linkedin")
