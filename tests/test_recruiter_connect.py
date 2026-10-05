@@ -27,7 +27,7 @@ class RecruiterConnectTests(unittest.TestCase):
             "max_connection_requests_per_day": 10,
         })
 
-    def test_note_length_strictly_under_200_chars(self):
+    def test_note_length_strictly_under_300_chars(self):
         cases = [
             ("Sankalp Sharma", "Full Stack Developer", "Google"),
             ("Dr. Jane Doe, Ph.D.", "Senior Lead Full-Stack Software Engineer (React / Node)", "Microsoft Technologies Corporation India Pvt Ltd"),
@@ -38,9 +38,9 @@ class RecruiterConnectTests(unittest.TestCase):
 
         for name, role, company in cases:
             note = build_recruiter_connection_note(name, role, company, self.profile)
-            self.assertLessEqual(len(note), MAX_NOTE_LENGTH, f"Note exceeded 200 chars ({len(note)} chars): {note}")
+            self.assertLessEqual(len(note), MAX_NOTE_LENGTH, f"Note exceeded 300 chars ({len(note)} chars): {note}")
             self.assertTrue(note.startswith("Hi "), f"Note should start with greeting: {note}")
-            self.assertIn("Full-Stack", note)
+            self.assertIn("full-stack", note.lower())
             self.assertIn("Ganesh", note)
 
     def test_daily_counter_returns_integer(self):

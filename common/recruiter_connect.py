@@ -13,7 +13,7 @@ from pathlib import Path
 from common.profile import Profile
 
 CONNECTION_LOG_FILE = "connection_requests_log.csv"
-MAX_NOTE_LENGTH = 200
+MAX_NOTE_LENGTH = 300
 
 
 def count_connections_today(today_date: date | None = None) -> int:
@@ -87,9 +87,58 @@ def log_connection_request(recruiter_name: str, recruiter_profile_url: str, job_
                 pass
 
 
+def follow_recruiter(page_or_tab) -> bool:
+    """
+    Clicks the '+ Follow' button on a recruiter card or profile if available and not already followed.
+    Following increases visibility so the recruiter sees your activity and note.
+    """
+    try:
+        followed = page_or_tab.evaluate("""() => {
+            const btns = Array.from(document.querySelectorAll('button, a[role="button"]')).filter(b => b.getBoundingClientRect().width > 0);
+            for (const b of btns) {
+                const text = (b.innerText || '').trim().toLowerCase();
+                const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                const isFollow = (text === 'follow' || text === '+ follow' || text === '+follow' || (aria.startsWith('follow ') && !aria.startsWith('following')));
+                const isAlreadyFollowing = text.includes('following') || aria.includes('following') || text.includes('unfollow');
+                if (isFollow && !isAlreadyFollowing) {
+                    b.click();
+                    return true;
+                }
+            }
+            return false;
+        }""")
+        if followed:
+            time.sleep(1.0)
+            print("  [Recruiter Connect] 👤 Followed recruiter on LinkedIn.")
+            return True
+    except Exception as e:
+        print(f"  [Recruiter Connect] Follow note: {e}")
+    return False
+
+
+def get_relevant_skills_snippet(job_title: str) -> str:
+    """
+    Dynamically selects the most relevant core skills from candidate profile based on target role.
+    """
+    title_lower = (job_title or "").lower()
+    if any(k in title_lower for k in ["python", "fastapi", "django", "flask"]):
+        return "Python, FastAPI, React, AI/LLMs"
+    elif any(k in title_lower for k in ["java", "spring", "spring boot"]):
+        return "Java, Spring Boot, React, Node.js"
+    elif any(k in title_lower for k in ["frontend", "react", "next", "ui developer"]):
+        return "React, Next.js, TypeScript, Node.js"
+    elif any(k in title_lower for k in ["backend", "node", "express"]):
+        return "Node.js, Express, Java, REST APIs"
+    elif any(k in title_lower for k in ["ai", "llm", "agentic", "generative"]):
+        return "AI/LLMs, LangChain, Python, Full-Stack"
+    else:
+        return "React, Node.js, Java, AI/LLMs"
+
+
 def build_recruiter_connection_note(recruiter_name: str, job_title: str, company: str, profile: Profile) -> str:
     """
-    Builds a personalized LinkedIn connection note strictly <= 200 characters.
+    Builds a personalized LinkedIn connection note strictly <= 300 characters.
+    Dynamically extracts recruiter name, target company, role, and custom skill highlights.
     """
     raw_name = (recruiter_name or "").strip()
     clean_name = re.sub(r"^(?:mr\.|ms\.|dr\.|mrs\.)\s*", "", raw_name, flags=re.I)
@@ -97,22 +146,19 @@ def build_recruiter_connection_note(recruiter_name: str, job_title: str, company
     first_name = re.sub(r"[^a-zA-Z]", "", first_name) or "there"
 
     clean_role = re.sub(r"\s*\(.*?\)", "", job_title or "the role").strip()
-    clean_role = re.sub(r"(?:senior|sr\.?|lead|staff)\s+", "", clean_role, flags=re.I).strip()
     clean_company = re.sub(r"\s*(?:ltd|inc|pvt|llc|corporation|technologies|services)\.?$", "", company or "", flags=re.I).strip()
 
-    if len(clean_role) > 24:
-        clean_role = clean_role[:22] + ".."
-    if len(clean_company) > 18:
-        clean_company = clean_company[:16] + ".."
-
     candidate_name = profile.data.get("first_name", "Ganesh")
+    skills_snippet = get_relevant_skills_snippet(job_title)
 
-    template = f"Hi {first_name}, I applied for {clean_role} at {clean_company}! With 3y in Full-Stack (React, Node, Java, AI), I'd love to connect & share how I can contribute. Best, {candidate_name}"
+    # Primary comprehensive template (< 300 chars)
+    template = f"Hi {first_name}, I noticed your opening for {clean_role} at {clean_company} and applied! I bring 3 years of full-stack experience ({skills_snippet}). Would love to connect and share how I can contribute to your team. Best, {candidate_name}"
 
     if len(template) <= MAX_NOTE_LENGTH:
         return template
 
-    compact = f"Hi {first_name}, I applied for {clean_role} at {clean_company}! With 3y Full-Stack exp (React, Node, Java, AI), I'd love to connect and discuss the role. - {candidate_name}"
+    # Compact fallback (< 300 chars)
+    compact = f"Hi {first_name}, I applied for {clean_role} at {clean_company}! With 3y in Full-Stack ({skills_snippet}), I'd love to connect & share how I can contribute. Best, {candidate_name}"
     if len(compact) <= MAX_NOTE_LENGTH:
         return compact
 
@@ -166,7 +212,8 @@ def extract_hiring_manager(page) -> dict | None:
 
 def send_recruiter_connection_request(page, recruiter_info: dict, job_title: str, company: str, profile: Profile) -> bool:
     """
-    Sends a connection request with a personalized <=200 character note to the recruiter.
+    Sends a connection request with a personalized <=300 character note to the recruiter.
+    Also follows the recruiter to maximize visibility and connection acceptance.
     """
     if not recruiter_info or not recruiter_info.get("name"):
         return False
@@ -193,6 +240,10 @@ def send_recruiter_connection_request(page, recruiter_info: dict, job_title: str
     print(f"  [Recruiter Connect] Outreach to {recruiter_name} ({len(note)} chars): \"{note}\"")
 
     try:
+        # Step 1: Follow recruiter on job card if button is present
+        follow_recruiter(page)
+
+        # Step 2: Check if direct Connect button exists on card
         connect_clicked = page.evaluate("""() => {
             const posterEl = document.querySelector(
                 '.jobs-poster, [class*="hirer-card"], [class*="hiring-team"], ' +
@@ -212,61 +263,165 @@ def send_recruiter_connection_request(page, recruiter_info: dict, job_title: str
             return false;
         }""")
 
-        time.sleep(random.uniform(1.2, 2.0))
+        if connect_clicked:
+            time.sleep(random.uniform(1.2, 2.0))
+            if _handle_invitation_modal(page, note):
+                log_connection_request(recruiter_name, clean_url, job_title, company, note, "sent")
+                print(f"  [Recruiter Connect] Successfully sent personalized connection request to {recruiter_name}!")
+                return True
 
-        modal_handled = page.evaluate("""([noteText]) => {
-            const modal = document.querySelector('dialog, [role="dialog"], .send-invite, .artdeco-modal');
-            if (!modal) return false;
-
-            const addNoteBtn = Array.from(modal.querySelectorAll('button')).find(b => {
-                const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase();
-                return t.includes('add a note') || t.includes('add note');
-            });
-            if (addNoteBtn) {
-                addNoteBtn.click();
-            }
-
-            return true;
-        }""", [note])
-
-        time.sleep(random.uniform(0.8, 1.4))
-
-        textarea_filled = page.evaluate("""([noteText]) => {
-            const modal = document.querySelector('dialog, [role="dialog"], .send-invite, .artdeco-modal') || document;
-            const textarea = modal.querySelector('textarea[name="message"], textarea#custom-message, textarea');
-            if (!textarea) return false;
-
-            textarea.focus();
-            let proto = window.HTMLTextAreaElement.prototype;
-            const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
-            setter.call(textarea, noteText);
-            textarea.dispatchEvent(new Event('input', {bubbles: true}));
-            textarea.dispatchEvent(new Event('change', {bubbles: true}));
-            return true;
-        }""", [note])
-
-        time.sleep(random.uniform(0.6, 1.2))
-
-        send_clicked = page.evaluate("""() => {
-            const modal = document.querySelector('dialog, [role="dialog"], .send-invite, .artdeco-modal') || document;
-            const sendBtn = Array.from(modal.querySelectorAll('button')).find(b => {
-                const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase();
-                return (t.includes('send') || t.includes('done')) && !t.includes('without');
-            });
-            if (sendBtn) {
-                sendBtn.click();
-                return true;
-            }
-            return false;
-        }""")
-
-        if send_clicked:
-            time.sleep(random.uniform(1.5, 2.5))
-            log_connection_request(recruiter_name, clean_url, job_title, company, note, "sent")
-            print(f"  [Recruiter Connect] Successfully sent personalized connection request to {recruiter_name}!")
-            return True
+        # If card had 'Message' or no direct Connect, open recruiter profile in a new tab/page
+        if clean_url:
+            print(f"  [Recruiter Connect] Card shows 'Message' / non-connect. Opening profile: {clean_url}")
+            sent = _send_connection_via_profile_tab(page.context, clean_url, note)
+            if sent:
+                log_connection_request(recruiter_name, clean_url, job_title, company, note, "sent")
+                print(f"  [Recruiter Connect] Successfully sent connection request via profile to {recruiter_name}!")
+                return True
 
     except Exception as e:
         print(f"  [Recruiter Connect] Error sending connection request: {e}")
 
     return False
+
+
+def _handle_invitation_modal(page, note: str, dry_run: bool = False) -> bool:
+    """Helper to click 'Add a note', type note, and click 'Send' (strictly preventing 'Send without a note')."""
+    try:
+        time.sleep(2.0)
+        # Step 1: Click "Add a note" button in initial invitation modal
+        add_note_btn = page.locator('button:has-text("Add a note"), button[aria-label*="Add a note" i]').first
+        if add_note_btn.count() > 0:
+            add_note_btn.click()
+            time.sleep(1.2)
+        else:
+            page.evaluate("""() => {
+                const btns = Array.from(document.querySelectorAll('button, a[role="button"]')).filter(b => b.getBoundingClientRect().width > 0);
+                for (const b of btns) {
+                    const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase();
+                    if (t.includes('add a note') || t.includes('add note')) {
+                        b.click();
+                        return true;
+                    }
+                }
+                return false;
+            }""")
+            time.sleep(1.2)
+
+        # Step 2: Ensure textarea is present and type the note
+        textarea = page.locator('textarea[name="message"], textarea#custom-message, .send-invite textarea, textarea').first
+        if textarea.count() > 0:
+            textarea.wait_for(state="visible", timeout=3000)
+            textarea.click()
+            time.sleep(0.2)
+            textarea.fill(note)
+            time.sleep(0.8)
+        else:
+            print("  [Recruiter Connect] ❌ Error: Note textarea not found; aborting to prevent sending without note.")
+            return False
+
+        if dry_run:
+            print(f"  [Recruiter Connect] Dry-run mode: Note typed ({len(note)} chars) in modal.")
+            return True
+
+        # Step 3: Click real Send button (STRICTLY excluding 'Send without a note')
+        send_btn = page.locator('dialog button, [role="dialog"] button, .artdeco-modal button').filter(has_text=re.compile(r'^(?:Send|Done)$', re.I)).filter(has_not_text=re.compile(r'without', re.I)).first
+        if send_btn.count() == 0:
+            send_btn = page.locator('button[aria-label*="Send invitation" i], button[aria-label*="Send now" i], button:has-text("Send")').filter(has_not_text=re.compile(r'without', re.I)).first
+
+        if send_btn.count() > 0:
+            send_btn.click()
+            time.sleep(2.5)
+            return True
+
+        # JS fallback for Send button excluding without
+        clicked_send = page.evaluate("""() => {
+            const btns = Array.from(document.querySelectorAll('button')).filter(b => b.getBoundingClientRect().width > 0);
+            for (const b of btns) {
+                const t = (b.innerText || b.getAttribute('aria-label') || '').trim().toLowerCase();
+                if ((t === 'send' || t === 'done' || t === 'send now') && !t.includes('without')) {
+                    b.click();
+                    return true;
+                }
+            }
+            return false;
+        }""")
+        if clicked_send:
+            time.sleep(2.5)
+            return True
+
+        print("  [Recruiter Connect] ❌ Error: Real Send button not found after typing note.")
+        return False
+    except Exception as e:
+        print(f"  [Recruiter Connect] Modal error: {e}")
+        return False
+
+
+def _send_connection_via_profile_tab(context, profile_url: str, note: str, dry_run: bool = False) -> bool:
+    """Opens profile in a new tab, clicks Connect (or More -> Connect), and sends note."""
+    tab = None
+    try:
+        tab = context.new_page()
+        tab.goto(profile_url, wait_until="domcontentloaded")
+        time.sleep(3.5)
+
+        # 1. Follow recruiter if not already followed
+        follow_recruiter(tab)
+        time.sleep(1.0)
+
+        # 2. Check direct Connect or More actions menu on top card
+        result = tab.evaluate("""() => {
+            const topCard = document.querySelector('main section, [data-view-name*="profile-card"], .pv-top-card') || document.querySelector('main') || document;
+            const btns = Array.from(topCard.querySelectorAll('button, a[role="button"]')).filter(b => !b.closest('aside') && b.getBoundingClientRect().width > 0);
+            
+            let connectBtn = null;
+            let moreBtn = null;
+            for (const b of btns) {
+                const t = (b.innerText || '').trim().toLowerCase();
+                const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                if (t === 'connect') {
+                    connectBtn = b;
+                }
+                if (aria === 'more' || aria === 'more actions' || t === 'more') {
+                    moreBtn = b;
+                }
+            }
+            
+            if (connectBtn) {
+                connectBtn.click();
+                return 'clicked_direct_connect';
+            } else if (moreBtn) {
+                moreBtn.click();
+                return 'clicked_more';
+            }
+            return 'none_found';
+        }""")
+
+        if result == 'clicked_more':
+            time.sleep(1.5)
+            # Find "Connect" inside role="menu" or dropdown
+            tab.evaluate("""() => {
+                const items = Array.from(document.querySelectorAll('[role="menu"] [role="menuitem"], [role="menu"] a, .artdeco-dropdown__content [role="menuitem"], .artdeco-dropdown__content a, .artdeco-dropdown__content button'));
+                for (const item of items) {
+                    const t = (item.innerText || '').toLowerCase();
+                    const key = (item.getAttribute('componentkey') || '').toLowerCase();
+                    if (t.includes('connect') || key.includes('connect')) {
+                        item.click();
+                        return true;
+                    }
+                }
+                return false;
+            }""")
+            time.sleep(2.0)
+
+        return _handle_invitation_modal(tab, note, dry_run=dry_run)
+    except Exception as e:
+        print(f"  [Recruiter Connect] Profile tab error: {e}")
+        return False
+    finally:
+        if tab and not dry_run:
+            try:
+                tab.close()
+            except Exception:
+                pass
+

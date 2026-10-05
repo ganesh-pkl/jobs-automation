@@ -93,6 +93,32 @@ class DirectAnswerTests(unittest.TestCase):
         self.assertTrue(naukri_apply._is_sensitive_field("What is your DOB?"))
         self.assertFalse(naukri_apply._is_sensitive_field("What is your notice period?"))
 
+    def test_hourly_rate_answers(self):
+        from common.answers import direct_profile_answer
+        answers = {"current_hourly_rate_usd": "15", "expected_hourly_rate_usd": "25"}
+        self.assertEqual(direct_profile_answer("What is your current hourly rate (in USD)?*", answers), "15")
+        self.assertEqual(direct_profile_answer("What is your expected hourly rate (in USD) for this engagement?*", answers), "25")
+
+    def test_immediate_joiner_respond_one(self):
+        from common.answers import direct_profile_answer
+        self.assertEqual(direct_profile_answer("How soon can you join? Respond '1' if you are an immediate joiner. *", {}), "1")
+
+    def test_contract_comfort_answer(self):
+        from common.answers import direct_profile_answer
+        self.assertEqual(direct_profile_answer("This is a short-term contract engagement of 3 months. Are you comfortable with this? *", {}), "Yes")
+
+    def test_learned_answer_validation(self):
+        from common.learned_answers import is_valid_screening_answer
+        self.assertFalse(is_valid_screening_answer("what is your current hourly rate in usd", "Yes"))
+        self.assertFalse(is_valid_screening_answer("how soon can you join respond 1 if you are an immediate joiner", "Immediately available"))
+        self.assertFalse(is_valid_screening_answer("Backend engineering ? *", "Yes"))
+        self.assertFalse(is_valid_screening_answer("Led a team or project ?*", "Yes, I have led full-stack development for scalable SaaS and AI platforms."))
+        self.assertTrue(is_valid_screening_answer("what is your current hourly rate in usd", "15"))
+        self.assertTrue(is_valid_screening_answer("are you comfortable working hybrid", "Yes"))
+        self.assertTrue(is_valid_screening_answer("Backend engineering ? *", "3"))
+        self.assertTrue(is_valid_screening_answer("Led a team or project ?*", "3"))
+
+
     def test_fresher_current_ctc_is_skipped(self):
         fresher = Profile({"current_ctc_lpa": 0})
         experienced = Profile({"current_ctc_lpa": 5})

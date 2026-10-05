@@ -150,6 +150,11 @@ class Profile:
                 "Negotiable" if d.get("ctc_disclosure_policy") == "negotiable"
                 else f"{d.get('expected_ctc_lpa', 9)} LPA"
             ),
+            "current_hourly_rate": str(d.get("current_hourly_rate_usd", 15)),
+            "expected_hourly_rate": str(d.get("expected_hourly_rate_usd", 25)),
+            "current_hourly_rate_usd": str(d.get("current_hourly_rate_usd", 15)),
+            "expected_hourly_rate_usd": str(d.get("expected_hourly_rate_usd", 25)),
+
             "current_city": d.get("current_city", "Hyderabad"),
             "full_location": f"{d.get('current_city', 'Hyderabad')}, {d.get('state_province', 'Telangana')}, {d.get('country_name', 'India')}",
             "state_province": d.get("state_province", "Telangana"),
@@ -171,3 +176,4 @@ class Profile:
             "night_shift": "Yes" if d.get("night_shift_ok") else "No",
             "weekend_work": "Yes" if d.get("weekend_ok") else "No",
         }
+

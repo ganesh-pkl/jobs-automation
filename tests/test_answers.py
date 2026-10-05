@@ -39,11 +39,22 @@ class AnswersModuleTests(unittest.TestCase):
         self.assertEqual(direct_profile_answer("Email address*", answers), "ganesh.pkl08@gmail.com")
         self.assertEqual(direct_profile_answer("Major / Field of study", answers), "Electronics and Communication Engineering")
         self.assertEqual(direct_profile_answer("Highest Qualification Held*", answers), "Bachelor of Technology")
+        self.assertEqual(direct_profile_answer("Backend engineering ? *", answers), "3")
+        self.assertEqual(direct_profile_answer("Led a team or project ?*", answers), "3")
+        self.assertEqual(direct_profile_answer("Data engineering ?", answers), "3")
+        self.assertEqual(direct_profile_answer("How many years of work experience do you have with Back-End Web Development?*", answers), "3")
+        self.assertEqual(direct_profile_answer("How many years of work experience do you have with IPython?*", answers), "3")
+        self.assertEqual(direct_profile_answer("How many years of work experience do you have with .NET Core?", answers), "0")
 
     def test_sensitive_field_detection(self):
         self.assertTrue(is_sensitive_field("Please share your PAN card number"))
         self.assertTrue(is_sensitive_field("Enter date of birth"))
         self.assertFalse(is_sensitive_field("What is your current CTC?"))
+
+    def test_screening_answer_numeric_competencies(self):
+        self.assertEqual(get_screening_answer("Backend engineering ? *", self.profile), "3")
+        self.assertEqual(get_screening_answer("Led a team or project ?*", self.profile), "3")
+        self.assertEqual(get_screening_answer("Data engineering ?", self.profile), "3")
 
     @patch("common.learned_answers.get_answer", return_value=None)
     @patch("common.llm.draft_answer", return_value="I have 3 years of experience in React and Node.js.")

@@ -62,12 +62,23 @@ TRIGGER_PHRASES = {
     "skills_csv": [
         "skill set", "technical skills", "primary skills", "key skills",
     ],
+    "current_hourly_rate": [
+        "current hourly rate", "current hourly", "present hourly rate",
+        "current rate in usd", "current rate (in usd)", "current hourly pay",
+        "hourly rate (in usd)", "current rate", "current pay per hour",
+    ],
+    "expected_hourly_rate": [
+        "expected hourly rate", "expected hourly", "desired hourly rate",
+        "expected rate in usd", "expected rate (in usd)", "rate for this engagement",
+        "expected hourly pay", "hourly rate for this engagement", "expected rate",
+        "desired rate in usd", "rate per hour",
+    ],
     "gender": [
         "gender", "sex",
     ],
     "notice_period": ["notice period", "notice", "joining time", "how soon"],
-    "current_ctc": ["current ctc", "current salary", "current compensation", "present ctc", "present salary", "current pay"],
-    "expected_ctc": ["expected ctc", "expected salary", "expected compensation", "desired ctc", "expectation"],
+    "current_ctc": ["current ctc", "current salary", "current compensation", "present ctc", "present salary", "current pay", "current annual salary"],
+    "expected_ctc": ["expected ctc", "expected salary", "expected compensation", "desired ctc", "expectation", "expected annual salary"],
     "current_city": ["current city", "current location", "which city", "current place", "located in", "base location", "city"],
     "relocate": ["relocate", "relocation", "willing to move"],
     "night_shift": ["night shift"],
@@ -121,7 +132,29 @@ def direct_profile_answer(question: str, answers: dict) -> str | None:
         if phrase in lower_q:
             return str(answers.get("phone", "7659869814"))
 
-    # 2. Check Graduation / Education Years FIRST so "graduation year" is never mistaken for experience years
+    # 2. Check Hourly Rates (USD) before general CTC/Salary
+    if any(w in lower_q for w in ("hourly", "per hour", "usd", "rate (in usd)", "rate in usd")):
+        if any(w in lower_q for w in ("current", "present", "now", "today", "currently")):
+            return str(answers.get("current_hourly_rate_usd", answers.get("current_hourly_rate", 15)))
+        return str(answers.get("expected_hourly_rate_usd", answers.get("expected_hourly_rate", 25)))
+
+    for phrase in TRIGGER_PHRASES["current_hourly_rate"]:
+        if phrase in lower_q:
+            return str(answers.get("current_hourly_rate_usd", 15))
+
+    for phrase in TRIGGER_PHRASES["expected_hourly_rate"]:
+        if phrase in lower_q:
+            return str(answers.get("expected_hourly_rate_usd", 25))
+
+    # 3. Check Immediate Joiner numeric prompts ('1' if immediate joiner)
+    if any(p in lower_q for p in ("respond '1'", "respond 1", "enter '1'", "enter 1", "type '1'", "type 1", "reply '1'", "reply 1")):
+        return "1"
+
+    # 4. Check Short-term contract / flexible engagement comfort
+    if any(w in lower_q for w in ("contract", "short-term", "short term", "engagement", "3 months", "6 months")) and any(w in lower_q for w in ("comfortable", "open to", "interested", "willing", "ready", "agree", "accept")):
+        return "Yes"
+
+    # 5. Check Graduation / Education Years FIRST so "graduation year" is never mistaken for experience years
     for phrase in TRIGGER_PHRASES["graduation_year"]:
         if phrase in lower_q:
             return str(answers.get("graduation_year", "2023"))
@@ -130,12 +163,12 @@ def direct_profile_answer(question: str, answers: dict) -> str | None:
         if phrase in lower_q:
             return str(answers.get("education_start_year", "2019"))
 
-    # 3. Check School / University / College Name
+    # 6. Check School / University / College Name
     for phrase in TRIGGER_PHRASES["school_name"]:
         if phrase in lower_q and not any(w in lower_q for w in ("degree", "grade", "gpa", "percentage", "cgpa")):
             return str(answers.get("school_name", "Chaitanya Bharathi Institute of Technology"))
 
-    # 4. Check Degree & Field of Study
+    # 7. Check Degree & Field of Study
     for phrase in TRIGGER_PHRASES["field_of_study"]:
         if phrase in lower_q:
             return str(answers.get("field_of_study", "Electronics and Communication Engineering"))
@@ -144,7 +177,7 @@ def direct_profile_answer(question: str, answers: dict) -> str | None:
         if phrase in lower_q:
             return str(answers.get("degree_name", "Bachelor of Technology"))
 
-    # 5. Check Location & Postal fields
+    # 8. Check Location & Postal fields
     for phrase in TRIGGER_PHRASES["postal_code"]:
         if phrase in lower_q:
             return str(answers.get("postal_code", "500072"))
@@ -157,7 +190,58 @@ def direct_profile_answer(question: str, answers: dict) -> str | None:
         if phrase in lower_q:
             return str(answers.get("country_name", "India"))
 
-    # 6. Check Experience fields
+    # 9. Check Excluded / Unsupported skills (0 years)
+    EXCLUDED_SKILLS = (
+        "sfcc", "salesforce", ".net", "c#", "c and net", "net core", "asp.net",
+        "entity framework", "dapper", "alation", "ibm db2", "db2", "opencl",
+        "sap", "abap", "cobol", "fortran", "netapp", "flexera",
+    )
+    if any(s in lower_q for s in EXCLUDED_SKILLS) and any(w in lower_q for w in ("experience", "years", "yrs", "handson", "production")):
+        return "0"
+
+    # 10. Check Leadership / Team Leading / Project Management
+    LEADERSHIP_PHRASES = (
+        "led a team or project", "led a team", "led a project", "lead a team", "lead a project",
+        "team lead", "project lead", "technical lead", "tech lead", "leadership",
+        "project management", "team management", "leading a team",
+    )
+    if any(p in lower_q for p in LEADERSHIP_PHRASES):
+        return str(answers.get("years_experience", "3"))
+
+    # 11. Check Enterprise Projects / Deployed Count
+    if any(w in lower_q for w in ("end to end projects", "enterprise grade", "projects developed and deployed", "how many projects")):
+        return "3"
+
+    # 12. Check Rating scale (e.g. rate yourself on a scale of 1 to 5)
+    if "scale of 1" in lower_q or "scale 1" in lower_q:
+        return "4"
+
+    # 13. Check Candidate Core Technical Domains & Skill Experience
+    # Open-ended descriptive questions (e.g. "Describe your experience with React.js") should route to LLM
+    if any(lower_q.startswith(w) for w in ("describe", "explain", "tell us", "share", "why", "how did you", "what was", "detail", "write")):
+        return None
+
+    CORE_SKILLS = (
+        "backend", "back-end", "back end", "frontend", "front-end", "front end", "full stack",
+        "full-stack", "fullstack", "mern", "mean", "web development", "software development",
+        "software engineering", "programming", "python", "fastapi", "ipython", "django", "flask",
+        "javascript", "typescript", "react", "reactjs", "react.js", "next", "nextjs", "next.js",
+        "node", "nodejs", "node.js", "express", "html", "css", "tailwind", "java", "spring",
+        "spring boot", "rest", "rest api", "restful", "apis", "microservices", "system design",
+        "distributed system", "distributed systems", "concurrency", "sql", "mysql", "postgresql",
+        "postgres", "mongodb", "redis", "relational database", "aws", "azure", "cloud", "docker",
+        "kubernetes", "ci/cd", "cicd", "devops", "git", "github actions", "ai", "genai",
+        "generative ai", "llm", "rag", "agentic", "ai agents", "langchain", "langgraph",
+        "machine learning", "data engineering", "problem solving", "sensors", "systems engineering",
+        "ecommerce", "saas product", "saas",
+    )
+
+    # Check if question is a short skill/competence prompt (e.g. "Backend engineering ?", "Python ?")
+    clean_q = re.sub(r"[?*:\s]+$", "", lower_q).strip()
+    if clean_q in CORE_SKILLS or any(clean_q == f"{s} engineering" for s in ("backend", "frontend", "data", "cloud", "software", "systems")):
+        return str(answers.get("years_experience", "3"))
+
+    # Check skill-specific experience or general experience
     asks_skill_specific_experience = bool(
         re.search(
             r"\b(?:experience|years?)\b[^?]{0,80}\b(?:in|with|using|on)\s+(?!years?\b|yrs?\b|months?\b)[a-z0-9#+.]+",
@@ -166,11 +250,15 @@ def direct_profile_answer(question: str, answers: dict) -> str | None:
         or re.search(r"\byears?\s+of\s+(?!experience\b)[a-z0-9#+.]+\s+experience\b", lower_q)
     )
     if asks_skill_specific_experience:
+        # Check if the requested skill is in core skills
+        if any(s in lower_q for s in CORE_SKILLS):
+            return str(answers.get("years_experience", "3"))
         try:
             if float(answers.get("years_experience", 0)) <= 0:
                 return "0"
         except (TypeError, ValueError):
             pass
+
     if (
         "years_experience" in answers
         and not asks_skill_specific_experience
@@ -178,7 +266,7 @@ def direct_profile_answer(question: str, answers: dict) -> str | None:
     ):
         return str(answers["years_experience"])
 
-    # 7. Check other Trigger phrases
+    # 14. Check other Trigger phrases
     for key, phrases in TRIGGER_PHRASES.items():
         if key in answers and any(phrase in lower_q for phrase in phrases):
             return str(answers[key])
@@ -188,10 +276,10 @@ def direct_profile_answer(question: str, answers: dict) -> str | None:
 def get_screening_answer(question_text: str, profile: Profile, job_context: str = "") -> str | None:
     """
     Returns an answer string for any screening question using:
-    1. Learned answers repository
-    2. Direct profile fact matching (CTC, notice period, location, total & skill experience, DOB, name)
+    1. Direct profile fact matching (CTC, hourly rates, notice period, location, total & skill experience, DOB, name)
+    2. Learned answers repository (with validation)
     3. Groq LLM dynamic drafting with applicant profile & facts
-    4. Smart profile defaults
+    4. Smart, strictly-typed profile defaults
     """
     answers = profile.answer_library()
     if is_sensitive_field(question_text):
@@ -200,30 +288,39 @@ def get_screening_answer(question_text: str, profile: Profile, job_context: str 
             return direct
         return ask_user(f"Sensitive screening question:\n{question_text}")
 
-    # 1. Check remembered/learned answers
-    stored = learned_answers.get_answer(question_text)
-    if stored:
-        return stored
-
-    # 2. Check direct profile facts
+    # 1. Direct profile facts FIRST (highest accuracy, never corrupted)
     direct = direct_profile_answer(question_text, answers)
     if direct is not None:
         learned_answers.save_answer(question_text, direct)
         return direct
 
+    # 2. Check remembered/learned answers
+    stored = learned_answers.get_answer(question_text)
+    if stored:
+        return stored
+
     # 3. Dynamic Groq LLM generation
     try:
         full_context = {**profile.llm_context(), **answers}
         draft = llm.draft_answer(question_text, full_context, job_context)
-        if not draft.startswith("[NEEDS_HUMAN_INPUT"):
+        if not draft.startswith("[NEEDS_HUMAN_INPUT") and learned_answers.is_valid_screening_answer(question_text, draft):
             learned_answers.save_answer(question_text, draft)
             return draft
     except Exception as e:
         print(f"  (LLM drafting warning: {e})")
 
-    # 4. Fallback defaults if LLM could not parse or output was [NEEDS_HUMAN_INPUT
+    # 4. Strict, type-safe fallback defaults
     lower_q = question_text.lower()
-    if any(w in lower_q for w in ("graduat", "passout", "passing year", "completion year", "end year")):
+
+    # Numeric hourly rate
+    if any(w in lower_q for w in ("hourly", "per hour", "usd", "rate (in usd)", "rate in usd")):
+        if any(w in lower_q for w in ("current", "present", "now")):
+            fallback = str(answers.get("current_hourly_rate_usd", "15"))
+        else:
+            fallback = str(answers.get("expected_hourly_rate_usd", "25"))
+    elif any(p in lower_q for p in ("respond '1'", "respond 1", "enter '1'", "enter 1", "if you are an immediate joiner")):
+        fallback = "1"
+    elif any(w in lower_q for w in ("graduat", "passout", "passing year", "completion year", "end year")):
         fallback = str(answers.get("graduation_year", "2023"))
     elif any(w in lower_q for w in ("school", "university", "college", "institute")):
         fallback = str(answers.get("school_name", "Chaitanya Bharathi Institute of Technology"))
@@ -237,18 +334,33 @@ def get_screening_answer(question_text: str, profile: Profile, job_context: str 
         fallback = str(answers.get("state_province", "Telangana"))
     elif "country" in lower_q:
         fallback = str(answers.get("country_name", "India"))
-    elif "ctc" in lower_q or "salary" in lower_q:
-        fallback = str(answers.get("expected_ctc", "Negotiable"))
-    elif "notice" in lower_q:
-        fallback = str(answers.get("notice_period", "Immediately available"))
+    elif any(w in lower_q for w in ("current ctc", "current salary", "present ctc", "current compensation")):
+        fallback = str(answers.get("current_ctc_lpa", "6"))
+    elif any(w in lower_q for w in ("expected ctc", "expected salary", "desired ctc", "expected compensation")):
+        fallback = str(answers.get("expected_ctc_lpa", "9"))
+    elif "ctc" in lower_q or "salary" in lower_q or "compensation" in lower_q:
+        fallback = str(answers.get("expected_ctc_lpa", "9"))
+    elif "notice" in lower_q or "how soon" in lower_q or "joining" in lower_q:
+        if any(w in lower_q for w in ("in days", "days", "number of days", "numeric")):
+            fallback = "0"
+        else:
+            fallback = "1"
     elif "location" in lower_q or "city" in lower_q:
         fallback = str(answers.get("current_city", "Hyderabad"))
-    elif "experience" in lower_q or "years" in lower_q or "yrs" in lower_q:
+    elif any(w in lower_q for w in ("experience", "years", "yrs", "how many years", "total years", "backend", "frontend", "full stack", "fullstack", "engineering", "lead", "leadership", "scale")):
         fallback = str(answers.get("years_experience", "3"))
-    elif "?" in question_text and any(w in lower_q for w in ("willing", "ready", "open to", "comfortable", "have experience", "worked on")):
+    elif any(w in lower_q for w in ("willing", "ready", "open to", "comfortable", "have experience", "worked on", "authorized", "agree", "accept")):
         fallback = "Yes"
+    elif any(w in lower_q for w in ("sponsorship", "visa required", "require visa", "require sponsorship")):
+        fallback = "No"
+    elif lower_q.startswith(("is ", "are ", "do ", "does ", "did ", "have ", "has ", "can ", "will ", "would ", "were ", "was ")):
+        fallback = "Yes"
+    elif lower_q.strip().endswith("?") and not any(w in lower_q for w in ("what", "where", "why", "which", "how")):
+        # Short technical competence question (e.g. "Backend engineering ?")
+        fallback = str(answers.get("years_experience", "3"))
     else:
         fallback = "Yes"
 
     learned_answers.save_answer(question_text, fallback)
     return fallback
+
