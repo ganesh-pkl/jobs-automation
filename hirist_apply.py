@@ -227,6 +227,7 @@ def run(limit: int | None = None):
     run_limit = min(target_limit, int(profile.stop_after_n_applications or 100))
     print(f"Hirist session starting (Platform threshold: {platform_threshold} | Target this run: {run_limit})")
     applied = 0
+    applied_keys = load_applied_job_keys()
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=profile.browser_mode == "headless")
