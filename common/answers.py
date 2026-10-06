@@ -122,7 +122,7 @@ def direct_profile_answer(question: str, answers: dict) -> str | None:
 
     for phrase in TRIGGER_PHRASES["dob"]:
         if phrase in lower_q:
-            return str(answers.get("dob", answers.get("date_of_birth", "15/08/2001")))
+            return str(answers.get("dob", answers.get("date_of_birth", "10/06/2001")))
 
     for phrase in TRIGGER_PHRASES["email"]:
         if phrase in lower_q:

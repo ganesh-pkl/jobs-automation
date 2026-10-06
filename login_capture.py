@@ -14,6 +14,7 @@ Usage:
 import sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+from common.stealth import get_launch_kwargs, get_context_options, apply_stealth
 
 SITES = {
     "naukri": "https://www.naukri.com/nlogin/login",
@@ -38,15 +39,13 @@ def main():
     out_path = f"session_{site}.json"
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=False,
-            args=["--disable-blink-features=AutomationControlled"]
-        )
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 800}
-        )
+        launch_kwargs = get_launch_kwargs(headless=False, slow_mo=50)
+        browser = p.chromium.launch(**launch_kwargs)
+        context_opts = get_context_options()
+        context = browser.new_context(**context_opts)
+        apply_stealth(context)
         page = context.new_page()
+
         # Naukri and Foundit keep background requests open, so waiting for the full
         # `load` event can time out even when the login page is usable.
         page.goto(url, wait_until="domcontentloaded", timeout=60000)

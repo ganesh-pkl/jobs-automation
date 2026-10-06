@@ -16,6 +16,16 @@ from common import llm
 from common import stats_tracker
 from common.answers import get_screening_answer
 from common.recruiter_connect import extract_hiring_manager, send_recruiter_connection_request
+from common.stealth import (
+    get_launch_kwargs,
+    get_context_options,
+    apply_stealth,
+    check_linkedin_restrictions,
+    human_move_and_click,
+    human_scroll,
+    human_dwell,
+    human_type,
+)
 
 SESSION_FILE = "session_linkedin.json"
 LOG_FILE = "applications_log.csv"
@@ -165,12 +175,20 @@ def wait_before_next_application(profile: Profile) -> float:
 
 
 def page_has_stop_signal(page) -> str | None:
-    text = page.inner_text("body").lower()
-    for phrase in STOP_PHRASES:
-        if phrase in text:
-            return phrase
-    if "/checkpoint/" in page.url or "/login" in page.url:
-        return "session expired / checkpoint challenge"
+    if not page:
+        return None
+    try:
+        text = page.inner_text("body").lower()
+        for phrase in STOP_PHRASES:
+            if phrase in text:
+                return phrase
+        if "/checkpoint/" in page.url or "/login" in page.url or "/authwall" in page.url:
+            return "session expired / checkpoint challenge"
+        is_res, reason = check_linkedin_restrictions(page)
+        if is_res:
+            return reason
+    except Exception:
+        pass
     return None
 
 
@@ -568,7 +586,7 @@ def select_dropdown_option(page, field_id: str, label: str, profile: Profile, jo
                 preferred_values = [ans.lower()]
 
 
-    return page.evaluate("""([id, preferredList, startYear, gradYear]) => {
+    return page.evaluate(r"""([id, preferredList, startYear, gradYear]) => {
         const el = document.getElementById(id);
         if (!el || el.tagName !== 'SELECT' || el.options.length <= 1) return false;
 
@@ -1708,31 +1726,11 @@ def run(limit: int | None = None):
     applied = 0
     with sync_playwright() as p:
         # Anti-detection stealth launch
-        browser = p.chromium.launch(
-            headless=profile.browser_mode == "headless",
-            slow_mo=300,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--disable-infobars",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-            ]
-        )
-        context = browser.new_context(
-            storage_state=SESSION_FILE,
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            viewport={"width": 1440, "height": 900},
-            locale="en-US",
-            timezone_id="Asia/Kolkata",
-        )
-        context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-            window.chrome = {
-                runtime: {},
-            };
-        """)
+        launch_kwargs = get_launch_kwargs(headless=profile.browser_mode == "headless", slow_mo=100)
+        browser = p.chromium.launch(**launch_kwargs)
+        context_opts = get_context_options(storage_state=SESSION_FILE)
+        context = browser.new_context(**context_opts)
+        apply_stealth(context)
         page = context.new_page()
 
         for target in search_targets:

@@ -33,7 +33,7 @@ class AnswersModuleTests(unittest.TestCase):
         self.assertEqual(direct_profile_answer("Start Year", answers), "2019")
         self.assertEqual(direct_profile_answer("State/Province", answers), "Telangana")
         self.assertEqual(direct_profile_answer("Country", answers), "India")
-        self.assertEqual(direct_profile_answer("DOB ( Date of Birth )", answers), "15/08/2001")
+        self.assertEqual(direct_profile_answer("DOB ( Date of Birth )", answers), "10/06/2001")
         self.assertEqual(direct_profile_answer("First name*", answers), "Ganesh")
         self.assertEqual(direct_profile_answer("Last name*", answers), "Pirikirala")
         self.assertEqual(direct_profile_answer("Email address*", answers), "ganesh.pkl08@gmail.com")

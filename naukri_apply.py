@@ -374,40 +374,62 @@ def check_apply_button(page) -> str:
 
 
 def _wait_send_enabled(page, timeout_ms: int = 4000) -> bool:
-    """Polls until the Send control's wrapper no longer has Naukri's
-    'disabled' class. Confirmed real markup (from a debug HTML dump you
-    sent): <div id="sendMsg__..." class="send disabled"> wraps the
-    clickable <div class="sendMsg">Save</div>. It starts disabled and only
-    becomes clickable after Naukri's frontend registers your selection and
-    re-renders -- clicking Send before that happens is a silent no-op,
-    which is what was causing radio/checkbox answers to never actually save."""
+    """Waits for Naukri's screening-chat Save/Send button to become enabled."""
     waited = 0
-    step = 300
+    step = 250
     while waited <= timeout_ms:
         enabled = safe_evaluate(page, """
             () => {
-                const wrapper = document.querySelector('[id^="sendMsg__"]');
-                if (!wrapper) return true;  // no wrapper found -- don't block forever on a guess
-                return !wrapper.className.includes('disabled');
+                const root = document.querySelector('[class*="chatbot_Drawer"], [class*="drawer"], .chat-container, div[role="dialog"]') || document;
+                const wrapper = root.querySelector('[id^="sendMsg__"], button, .sendMsg, [class*="sendMsg"], [class*="save"]');
+                if (!wrapper) return true;
+                const cls = (wrapper.className || '').toLowerCase();
+                const disabledAttr = wrapper.getAttribute('disabled');
+                if (disabledAttr !== null && disabledAttr !== 'false') return false;
+                return !cls.includes('disabled');
             }
         """, default=True)
         if enabled:
             return True
         time.sleep(step / 1000)
         waited += step
-    return False
+    return True
 
 
 def _js_click_send(page) -> bool:
-    """Clicks Naukri's screening-chat Send/Save control or dispatches Enter event."""
+    """Clicks Naukri's screening-chat Save/Send control or dispatches Enter event."""
+    # 1. First attempt: Playwright locator with real user pointer events
+    try:
+        root = page.locator('[class*="chatbot_Drawer"], [class*="drawer"], .chat-container, div[role="dialog"]').first
+        target = root if root.count() > 0 else page
+        btn = target.locator(
+            'button:has-text("Save"), button:has-text("Send"), button:has-text("Submit"), button:has-text("Next"), button:has-text("Apply"), .sendMsg, [class*="sendMsg"], [class*="saveMsg"], .chatbot_Send, [aria-label="Send"], [aria-label="Save"]'
+        ).last
+        if btn.count() > 0 and btn.is_visible():
+            btn.scroll_into_view_if_needed()
+            btn.click()
+            time.sleep(0.8)
+            return True
+    except Exception:
+        pass
+
+    # 2. Second attempt: JavaScript synthetic event dispatch
     return safe_evaluate(page, """
         () => {
-            const sendBtn = document.querySelector('.sendMsg, [class*="sendMsg"], button[class*="send"], .chatbot_Send, [aria-label="Send"], button.send-btn, [class*="sendButton"]');
+            const root = document.querySelector('[class*="chatbot_Drawer"], [class*="drawer"], .chat-container, div[role="dialog"]') || document;
+            const btns = Array.from(root.querySelectorAll('button, div[role="button"], a[role="button"], .sendMsg, [class*="sendMsg"], [class*="saveMsg"], .chatbot_Send, [class*="sendButton"], [class*="saveButton"]'));
+            const sendBtn = btns.find(b => {
+                const t = (b.innerText || b.getAttribute('aria-label') || '').trim().toLowerCase();
+                const cls = (b.className || '').toLowerCase();
+                return t === 'save' || t === 'send' || t === 'submit' || t === 'next' || t === 'apply' ||
+                       cls.includes('send') || cls.includes('save') || cls.includes('submit');
+            });
             if (sendBtn) {
+                sendBtn.scrollIntoView({behavior: 'instant', block: 'center'});
                 sendBtn.click();
                 return true;
             }
-            const ed = document.querySelector('[id^="userInput"], [contenteditable="true"], input[type="text"], textarea');
+            const ed = root.querySelector('input[placeholder*="message" i], input[placeholder*="type" i], input[type="text"], [id^="userInput"], textarea, [contenteditable="true"]');
             if (ed) {
                 ed.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true}));
                 return true;
@@ -685,7 +707,7 @@ def _direct_profile_answer(question: str, answers: dict) -> str | None:
 
     for phrase in TRIGGER_PHRASES["dob"]:
         if phrase in lower_q:
-            return str(answers.get("dob", answers.get("date_of_birth", "15/08/2001")))
+            return str(answers.get("dob", answers.get("date_of_birth", "10/06/2001")))
 
     for phrase in TRIGGER_PHRASES["email"]:
         if phrase in lower_q:
@@ -745,6 +767,8 @@ def _direct_profile_answer(question: str, answers: dict) -> str | None:
                 return "0"
         except (TypeError, ValueError):
             pass
+        return None
+
     if (
         "years_experience" in answers
         and not asks_skill_specific_experience
@@ -928,9 +952,23 @@ def _has_answerable_input(page, timeout_ms: int = 3000) -> bool:
 
 
 def _read_filled_text(page) -> str:
+    try:
+        drawer = page.locator('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container, div[role="dialog"]').first
+        root = drawer if drawer.count() > 0 else page
+        inp = root.locator(
+            'input[placeholder*="message" i], input[placeholder*="type" i], [id^="userInput"], input[type="text"], textarea, [contenteditable="true"], .chat-input input'
+        ).last
+        if inp.count() > 0 and inp.is_visible():
+            val = inp.input_value() or inp.inner_text() or ""
+            if val.strip():
+                return val.strip()
+    except Exception:
+        pass
+
     return safe_evaluate(page, """
         () => {
-            const ed = document.querySelector('[id^="userInput"], [contenteditable="true"], input[type="text"], input[placeholder*="message" i], textarea, .chat-input, [class*="inputBox"]');
+            const root = document.querySelector('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container, div[role="dialog"]') || document;
+            const ed = root.querySelector('input[placeholder*="message" i], input[placeholder*="type" i], [id^="userInput"], input[type="text"], textarea, .chat-input input, .chat-input, [class*="inputBox"] input, [class*="inputBox"], [contenteditable="true"]');
             if (!ed) return '';
             return (ed.value || ed.innerText || ed.textContent || '').trim();
         }
@@ -956,6 +994,7 @@ def _fill_and_send(page, text: str, question: str):
 
 def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: int):
     """Handles Naukri's post-apply screening chat drawer, if it appears."""
+    from common.answers import get_screening_answer, direct_profile_answer
     answers = profile.answer_library()
     try:
         page.wait_for_selector(
@@ -970,7 +1009,9 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
         if stop:
             raise StopRun(f"stop signal during screening chat: {stop}")
 
-        bubbles = page.query_selector_all('.botMsg, [class*="botMsg"], [class*="botMessage"], [class*="msgContainer"], .msg-text, [class*="chatbot"] p')
+        bubbles = page.query_selector_all(
+            '.botMsg, [class*="botMsg"], [class*="botMessage"], [class*="msgContainer"], [class*="msgText"], .msg-text, [class*="chatbot"] p, [class*="messageBubble"], [class*="chatBubble"], [class*="bot-msg"], div[class*="bubble"]'
+        )
         if not bubbles:
             break
         try:
@@ -1012,12 +1053,15 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
             time.sleep(2.0)
             continue
 
+        # 1. Direct profile fact check (DOB, skill experience e.g. Python, total experience, CTC, location, etc.)
+        direct_ans = direct_profile_answer(question, answers)
+        if direct_ans is not None:
+            _fill_and_send(page, direct_ans, question)
+            learned_answers.save_answer(question, direct_ans)
+            time.sleep(2.0)
+            continue
+
         if _is_sensitive_field(question):
-            direct_ans = _direct_profile_answer(question, answers)
-            if direct_ans is not None:
-                _fill_and_send(page, direct_ans, question)
-                time.sleep(2.0)
-                continue
             response = ask_user(
                 f"Screening question (personal detail):\n{question}",
                 timeout_seconds=timeout_s,
@@ -1033,42 +1077,38 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
             print(f"  (used a remembered answer for: {question[:80]})")
             continue
 
-        direct_answer = _direct_profile_answer(question, answers)
-        if direct_answer is not None:
-            _fill_and_send(page, direct_answer, question)
-            learned_answers.save_answer(question, direct_answer)
+        # 2. Comprehensive screening answer generator (Groq LLM + smart typed profile fallbacks)
+        ans = get_screening_answer(question, profile, job_context=job_context)
+        if ans is not None:
+            _fill_and_send(page, ans, question)
+            time.sleep(2.0)
             continue
-
-        try:
-            full_context = {**profile.llm_context(), **answers}
-            draft = llm.draft_answer(question, full_context, job_context)
-        except Exception:
-            draft = "[NEEDS_HUMAN_INPUT: provider error]"
-        if draft.startswith("[NEEDS_HUMAN_INPUT"):
-            lower_q = question.lower()
-            if "experience" in lower_q or "years" in lower_q or "yrs" in lower_q:
-                fallback_ans = str(answers.get("years_experience", "3"))
-            elif "ctc" in lower_q or "salary" in lower_q:
-                fallback_ans = str(answers.get("expected_ctc", "Negotiable"))
-            elif "notice" in lower_q:
-                fallback_ans = str(answers.get("notice_period", "Immediately available"))
-            elif "city" in lower_q or "location" in lower_q:
-                fallback_ans = str(answers.get("current_city", "Hyderabad"))
-            elif "?" in question and any(w in lower_q for w in ("willing", "ready", "open to", "comfortable")):
-                fallback_ans = "Yes"
-            else:
-                fallback_ans = "Yes"
-            _fill_and_send(page, fallback_ans, question)
-            learned_answers.save_answer(question, fallback_ans)
-        else:
-            _fill_and_send(page, draft, question)
-            learned_answers.save_answer(question, draft)
 
 
 def _fill_freetext(page, text: str):
+    # 1. Try Playwright native locator fill in drawer first
+    try:
+        drawer = page.locator('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container, div[role="dialog"]').first
+        root = drawer if drawer.count() > 0 else page
+        inp = root.locator(
+            'input[placeholder*="message" i], input[placeholder*="type" i], [id^="userInput"], input[type="text"], textarea, [contenteditable="true"], .chat-input input'
+        ).last
+        if inp.count() > 0 and inp.is_visible():
+            inp.click()
+            time.sleep(0.15)
+            inp.fill("")
+            time.sleep(0.1)
+            inp.fill(str(text))
+            time.sleep(0.2)
+            return
+    except Exception:
+        pass
+
+    # 2. JavaScript fallback
     safe_evaluate(page, """
         (text) => {
-            const ed = document.querySelector('[id^="userInput"], [contenteditable="true"], input[type="text"], input[placeholder*="message" i], textarea, .chat-input, [class*="inputBox"]');
+            const root = document.querySelector('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container, div[role="dialog"]') || document;
+            const ed = root.querySelector('input[placeholder*="message" i], input[placeholder*="type" i], [id^="userInput"], input[type="text"], textarea, .chat-input input, .chat-input, [class*="inputBox"] input, [class*="inputBox"], [contenteditable="true"]');
             if (!ed) return;
             ed.focus();
             if (ed.tagName === 'INPUT' || ed.tagName === 'TEXTAREA') {
@@ -1080,11 +1120,12 @@ def _fill_freetext(page, text: str):
                 ed.dispatchEvent(new Event('input', {bubbles: true}));
                 ed.dispatchEvent(new Event('change', {bubbles: true}));
             } else {
-                document.execCommand('selectAll', false, null);
-                document.execCommand('insertText', false, text);
+                ed.innerText = text;
+                ed.dispatchEvent(new Event('input', {bubbles: true}));
+                ed.dispatchEvent(new Event('change', {bubbles: true}));
             }
         }
-    """, arg=text)
+    """, arg=str(text))
 
 
 def build_naukri_search_url(role: str, page_no: int, profile: Profile) -> str:
@@ -1253,8 +1294,6 @@ def run(preview: bool = False, limit: int | None = None):
                             print(f"Skipped: {card.get('title')} @ {card.get('company')} — no apply button found")
                             continue
 
-                        if attempted:
-                            wait_before_next_application(profile)
                         clicked = click_native_apply(page)
                         if not clicked:
                             log_row([datetime.now(), "naukri", card.get("title"),
@@ -1281,6 +1320,8 @@ def run(preview: bool = False, limit: int | None = None):
                                       f"couldn't confirm submission — screenshot saved to {shot_path}"])
                             print(f"UNCERTAIN: {card.get('title')} @ {card.get('company')} — "
                                   f"couldn't confirm the application actually went through. Check it manually.")
+
+                        wait_before_next_application(profile)
 
                     except SkipJob as e:
                         log_row([datetime.now(), "naukri", card.get("title"),

@@ -216,7 +216,7 @@ def run_parallel():
     tasks = [
         ("Hirist", [sys.executable, "hirist_apply.py"]),
         ("Naukri", [sys.executable, "naukri_apply.py"]),
-        # ("LinkedIn", [sys.executable, "linkedin_apply.py"]),  # Paused: account safety warning
+        # ("LinkedIn", [sys.executable, "linkedin_apply.py"]),  # Paused to protect LinkedIn account
         ("Uplers", [sys.executable, "uplers_apply.py"]),
         ("Instahyre", [sys.executable, "instahyre_apply.py"]),
         ("Foundit", [sys.executable, "foundit_apply.py"]),
@@ -306,8 +306,8 @@ def run_pipeline():
     except Exception as e:
         print(f"  (Naukri execution note: {e})")
 
-    # 3. LinkedIn is paused due to platform warning
-    # print(f"\n>>> [PAUSED] Skipping LinkedIn Automation...")
+    # 3. LinkedIn (Paused)
+    print(f"\n>>> [3/9] LinkedIn Automation — [PAUSED to protect account]")
     # try:
     #     import linkedin_apply
     #     linkedin_apply.run(limit=linkedin_safe_limit)
