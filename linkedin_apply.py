@@ -81,15 +81,19 @@ def extract_experience_requirement(text: str) -> int | None:
     return None
 
 
-def _resume_path(profile: Profile) -> Path | None:
-    """Resolve the private resume configured in profile.yaml."""
+def _resume_path(profile: Profile, job_context: str = "") -> Path | None:
+    """Resolve the private resume configured or targeted for the job role."""
+    from common.resume_selector import get_resume_path
+    path = get_resume_path(profile, job_context=job_context)
+    if path and path.is_file():
+        return path
     configured = str(profile.data.get("resume_file_name", "")).strip()
     if not configured:
         return None
-    path = Path(configured).expanduser()
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    return path if path.is_file() else None
+    p = Path(configured).expanduser()
+    if not p.is_absolute():
+        p = Path.cwd() / p
+    return p if p.is_file() else None
 
 
 def log_row(row: list):
@@ -193,7 +197,7 @@ def page_has_stop_signal(page) -> str | None:
 
 
 def describe_modal(page) -> dict:
-    return page.evaluate("""
+    return page.evaluate(r"""
         () => {
             const modal = document.querySelector('.jobs-easy-apply-modal') ||
                           document.querySelector('dialog[open]') ||
@@ -212,7 +216,7 @@ def describe_modal(page) -> dict:
                     try {
                         const lbl = modal.querySelector(`label[for="${CSS.escape(el.id)}"]`);
                         if (lbl) {
-                            const text = (lbl.innerText || '').replace(/[\n\r]+/g, ' ').trim();
+                            const text = (lbl.innerText || '').replace(/\s+/g, ' ').trim();
                             if (text.length > 1) return text;
                         }
                     } catch(e) {}
@@ -220,7 +224,7 @@ def describe_modal(page) -> dict:
                 if (el.getAttribute('aria-labelledby')) {
                     const lblEl = document.getElementById(el.getAttribute('aria-labelledby'));
                     if (lblEl) {
-                        const text = (lblEl.innerText || '').replace(/[\n\r]+/g, ' ').trim();
+                        const text = (lblEl.innerText || '').replace(/\s+/g, ' ').trim();
                         if (text.length > 1) return text;
                     }
                 }
@@ -228,10 +232,10 @@ def describe_modal(page) -> dict:
                 if (parent) {
                     const titleEl = parent.querySelector('legend, label, [class*="label-title"], [class*="title"], [class*="label"], h3, h4, p');
                     if (titleEl) {
-                        const text = (titleEl.innerText || '').replace(/[\n\r]+/g, ' ').trim();
+                        const text = (titleEl.innerText || '').replace(/\s+/g, ' ').trim();
                         if (text.length > 1) return text;
                     }
-                    const fullParentText = (parent.innerText || '').split('\\n')[0].trim();
+                    const fullParentText = (parent.innerText || '').split('\n')[0].trim();
                     if (fullParentText.length > 2) return fullParentText;
                 }
                 return (el.placeholder || '').trim();
@@ -686,7 +690,7 @@ def select_dropdown_option(page, field_id: str, label: str, profile: Profile, jo
     }""", [field_id, preferred_values, start_year, grad_year])
 
 
-def fill_form_step(page, profile: Profile, job_context: str):
+def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path | None = None, job_description: str = ""):
     state = describe_modal(page)
     if state.get("error"):
         time.sleep(1.5)
@@ -752,12 +756,13 @@ def fill_form_step(page, profile: Profile, job_context: str):
 
         # File upload fields (Resume, Documents)
         if field_type == "file":
-            resume_path = _resume_path(profile)
+            resume_path = target_resume or _resume_path(profile, job_context=job_context)
             if resume_path and field_id:
                 try:
                     file_input = page.locator(f'[id="{field_id}"]')
                     if file_input.count() > 0:
                         file_input.set_input_files(str(resume_path))
+                        print(f"  (uploaded role-targeted resume: {resume_path.name})")
                         time.sleep(random.uniform(0.5, 1.0))
                 except Exception:
                     pass
@@ -766,18 +771,18 @@ def fill_form_step(page, profile: Profile, job_context: str):
         # Contact Info / Phone country code
         if field_tag == "SELECT" and ("country code" in label.lower() or "phone country" in label.lower()):
             time.sleep(random.uniform(0.2, 0.4))
-            page.evaluate(f"""() => {{
-                const el = document.getElementById('{field_id}');
-                if (el) {{
-                    for (let i = 0; i < el.options.length; i++) {{{{
-                        if (el.options[i].text.includes('+91') || el.options[i].text.includes('India')) {{{{
+            page.evaluate("""([id]) => {
+                const el = document.getElementById(id);
+                if (el) {
+                    for (let i = 0; i < el.options.length; i++) {
+                        if (el.options[i].text.includes('+91') || el.options[i].text.includes('India')) {
                             el.selectedIndex = i;
-                            el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                            el.dispatchEvent(new Event('change', {bubbles: true}));
                             break;
-                        }}}}
-                    }}}}
-                }}
-            }}""")
+                        }
+                    }
+                }
+            }""", [field_id])
             continue
 
         # Phone Number
@@ -963,17 +968,56 @@ def fill_form_step(page, profile: Profile, job_context: str):
             fill_text_field(page, field_id, str(ans))
             time.sleep(random.uniform(0.2, 0.4))
 
-    # 3. Third pass: Ensure resume radio is selected if present
+    # 3. Third pass: Ensure resume radio is selected if present, prioritizing role-matching resume
     try:
-        page.evaluate("""() => {
-            const resumeRadios = Array.from(document.querySelectorAll('input[type="radio"][name*="resume"], input[type="radio"][id*="resume"], div[class*="document-upload"] input[type="radio"]'));
-            if (resumeRadios.length > 0 && !resumeRadios.some(r => r.checked)) {
-                const r0 = resumeRadios[0];
-                r0.click();
-                r0.checked = true;
-                r0.dispatchEvent(new Event('change', {bubbles: true}));
+        from common.resume_selector import get_resume_path
+        chosen_resume = target_resume or get_resume_path(profile, job_context=job_context, job_description=job_description)
+        target_name = chosen_resume.name if chosen_resume else ""
+        role_kw = []
+        ctx_lower = f"{job_context} {job_description}".lower()
+        if "ai" in ctx_lower or "ml" in ctx_lower or "llm" in ctx_lower or "rag" in ctx_lower:
+            role_kw.append("ai")
+        if "java" in ctx_lower or "spring" in ctx_lower:
+            role_kw.append("java")
+        if "mern" in ctx_lower or "react" in ctx_lower or "node" in ctx_lower:
+            role_kw.append("mern")
+            role_kw.append("react")
+        if "mean" in ctx_lower or "angular" in ctx_lower:
+            role_kw.append("mean")
+            role_kw.append("angular")
+        if "full" in ctx_lower and "stack" in ctx_lower:
+            role_kw.append("fullstack")
+
+        page.evaluate("""({targetName, roleKeywords}) => {
+            const resumeRadios = Array.from(document.querySelectorAll(
+                'input[type="radio"][name*="resume"], input[type="radio"][id*="resume"], div[class*="document-upload"] input[type="radio"], div[class*="jobs-document-upload"] input[type="radio"]'
+            ));
+            if (resumeRadios.length > 0) {
+                let matchedRadio = null;
+                if (targetName) {
+                    const tLower = targetName.toLowerCase();
+                    matchedRadio = resumeRadios.find(r => {
+                        const label = document.querySelector(`label[for="${r.id}"]`)?.innerText || '';
+                        const container = r.closest('div[class*="upload"], li, div[class*="card"], label')?.innerText || '';
+                        return (label + ' ' + container).toLowerCase().includes(tLower);
+                    });
+                }
+                if (!matchedRadio && roleKeywords && roleKeywords.length > 0) {
+                    matchedRadio = resumeRadios.find(r => {
+                        const label = document.querySelector(`label[for="${r.id}"]`)?.innerText || '';
+                        const container = r.closest('div[class*="upload"], li, div[class*="card"], label')?.innerText || '';
+                        const text = (label + ' ' + container).toLowerCase();
+                        return roleKeywords.some(kw => text.includes(kw));
+                    });
+                }
+                const toSelect = matchedRadio || (!resumeRadios.some(r => r.checked) ? resumeRadios[0] : null);
+                if (toSelect) {
+                    toSelect.click();
+                    toSelect.checked = true;
+                    toSelect.dispatchEvent(new Event('change', {bubbles: true}));
+                }
             }
-        }""")
+        }""", {"targetName": target_name, "roleKeywords": role_kw})
     except Exception:
         pass
 
@@ -1405,14 +1449,38 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
     # Strict pre-apply check on job description for experience requirements
     max_exp_ceiling = profile.seniority_ceiling_years if profile.seniority_ceiling_years is not None else 3
     detail_text = page.evaluate("""() => {
-        const desc = document.querySelector('.jobs-description, .jobs-description__container, .jobs-box__html-content, .job-details-jobs-unified-top-card__job-insight, div[class*="job-details"]');
-        return desc ? desc.innerText : '';
+        const selectors = [
+            '#job-details',
+            '.jobs-description__content',
+            '.jobs-description',
+            '.jobs-box__html-content',
+            '.job-details-jobs-unified-top-card__job-insight',
+            'article.jobs-description__container',
+            'div[class*="job-details"]'
+        ];
+        for (const sel of selectors) {
+            const el = document.querySelector(sel);
+            if (el && el.innerText && el.innerText.trim().length > 30) {
+                return el.innerText.trim();
+            }
+        }
+        return '';
     }""")
     if detail_text:
         req_exp = extract_experience_requirement(detail_text[:2000])
         if req_exp is not None and req_exp > max_exp_ceiling:
             print(f"  ❌ Skipped: {job_title} @ {company} (Job requires {req_exp}+ yrs exp — strictly exceeds {max_exp_ceiling} yrs ceiling)")
             return False
+
+    # Select targeted resume based on BOTH Title and Job Description
+    from common.resume_selector import select_resume
+    target_resume, match_reason = select_resume(
+        job_title=job_title,
+        job_description=detail_text,
+        profile=profile
+    )
+    if target_resume:
+        print(f"  📄 [Resume Selected] {target_resume.name} ({match_reason}) for '{job_title}'")
 
     time.sleep(random.uniform(1.2, 2.2))
     is_easy_apply_clicked = page.evaluate("""() => {
@@ -1450,8 +1518,8 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
             btn_arias = [(b.get("aria") or "").lower() for b in buttons]
             all_btn_strs = btn_texts + btn_arias
 
-            # 1. Fill current step form questions (radios, inputs, selects, and safety sweep)
-            fill_form_step(page, profile, job_context)
+            # 1. Fill current step form questions (radios, inputs, selects, resume upload, and safety sweep)
+            fill_form_step(page, profile, job_context, target_resume=target_resume, job_description=detail_text)
             time.sleep(random.uniform(1.2, 2.4))  # Human reading delay
 
             # 2. Check for Submit action
@@ -1654,9 +1722,6 @@ def build_linkedin_search_url(
 
 
 def run(limit: int | None = None):
-    print("\n⚠️  [PAUSED] LinkedIn automation is temporarily disabled to safeguard your account following a platform warning.")
-    print("   To re-enable in the future, remove the pause guard in linkedin_apply.py and daily_pipeline.py.\n")
-    return
     profile = Profile.load()
     if not Path(SESSION_FILE).exists():
         raise SystemExit(f"{SESSION_FILE} not found. Run: python login_capture.py linkedin")
@@ -1745,12 +1810,13 @@ def run(limit: int | None = None):
 
             print(f"\n--- Searching LinkedIn: {role} ({loc}){page_label} ---")
             try:
-                page.goto(search_url, timeout=25000)
+                page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_selector('.job-card-container, [data-job-id], .jobs-search-results-list, .scaffold-layout__list, button[aria-label^="Dismiss "]', timeout=12000)
             except PWTimeout:
                 pass
             except Exception as e:
                 print(f"  (navigation timeout or error: {e})")
+
             time.sleep(random.uniform(3.0, 5.0))
 
             stop = page_has_stop_signal(page)
@@ -2015,7 +2081,10 @@ def run(limit: int | None = None):
                                 pass
 
                     if not card_clicked and card.get("href"):
-                        page.goto(card["href"])
+                        try:
+                            page.goto(card["href"], wait_until="domcontentloaded", timeout=25000)
+                        except PWTimeout:
+                            pass
                         time.sleep(random.uniform(2.5, 4.0))
 
                     success = run_one_application(page, profile, card.get("title", ""), card.get("company", ""))

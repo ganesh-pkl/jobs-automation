@@ -208,6 +208,25 @@ def handle_instahyre_screening(page, profile: Profile, job_context: str):
         except Exception:
             pass
 
+    # Handle File / Resume Upload if required in modal
+    try:
+        file_inputs = page.locator(".application-modal-wrap input[type='file'], div.modal input[type='file'], div[role='dialog'] input[type='file']")
+        if file_inputs.count() > 0:
+            from common.resume_selector import get_resume_path
+            resume_path = get_resume_path(profile, job_context=job_context)
+            if resume_path and resume_path.is_file():
+                for i in range(file_inputs.count()):
+                    try:
+                        fi = file_inputs.nth(i)
+                        fi.set_input_files(str(resume_path.resolve()))
+                        print(f"  Auto-uploaded role-targeted resume: {resume_path.name}")
+                        time.sleep(1)
+                        break
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
 
 def close_modal(page):
     """Safely closes any open modal popup and waits for backdrop to hide."""

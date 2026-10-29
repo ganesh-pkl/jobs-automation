@@ -476,6 +476,25 @@ def handle_apna_screening_modal(page, job_info: dict, profile: Profile, dry_run:
         except Exception:
             pass
 
+        # 3b. Handle File / Resume upload inside modal if requested
+        try:
+            file_inputs = container.locator('input[type="file"], input[name*="resume" i], input[name*="cv" i]').all()
+            if file_inputs:
+                from common.resume_selector import get_resume_path
+                job_ctx = f"{job_info.get('title', '')} at {job_info.get('company', '')}"
+                resume_path = get_resume_path(profile, job_context=job_ctx)
+                if resume_path and resume_path.is_file():
+                    for fi in file_inputs:
+                        try:
+                            fi.set_input_files(str(resume_path.resolve()))
+                            print(f"  Auto-uploaded role-targeted resume: {resume_path.name}")
+                            time.sleep(1)
+                            break
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
         if dry_run:
             return "dry_run_success", "Dry run completed at Apna apply step"
 

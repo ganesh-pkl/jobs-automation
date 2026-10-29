@@ -13,6 +13,7 @@ screenshots/
 *.pdf
 *.doc
 *.docx
+resumes/
 
 # Python and local environments
 __pycache__/

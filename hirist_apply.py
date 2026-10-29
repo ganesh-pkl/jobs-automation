@@ -76,10 +76,10 @@ def load_applied_job_keys(path: str = LOG_FILE) -> set[tuple[str, str]]:
 def handle_hirist_screening(job_page, profile: Profile, title: str, company: str) -> bool:
     """
     Handles Hirist screening forms and multi-step questionnaires.
-    Loops through form steps (Next -> Submit) and fills all inputs, radios, and selects.
+    Loops through form steps (Next -> Next -> ... -> Submit) and fills all inputs, radios, selects, and textareas.
     """
     job_context = f"{title} at {company}"
-    max_steps = 5
+    max_steps = 10
 
     for step in range(max_steps):
         time.sleep(1.5)
@@ -92,23 +92,30 @@ def handle_hirist_screening(job_page, profile: Profile, title: str, company: str
         except Exception:
             pass
 
-        if "/job/applied" in page_url or any(w in page_text for w in ["applied successfully", "application submitted", "thank you for applying"]):
+        if "/job/applied" in page_url or any(w in page_text for w in [
+            "applied successfully", "application submitted", "thank you for applying",
+            "your application has been received", "application sent", "you have applied"
+        ]):
+            print("    Application confirmation detected on Hirist!")
             return True
 
         # 1. Answer text inputs & textareas
         try:
-            inputs = job_page.locator("textarea, input[type='text'], input[type='number'], input:not([type]):not([hidden])").all()
+            inputs = job_page.locator("textarea, input[type='text'], input[type='number'], input[type='email'], input[type='tel'], input:not([type]):not([hidden]), div[contenteditable='true']").all()
             for inp in inputs:
                 if not inp.is_visible() or inp.is_disabled():
                     continue
-                curr = inp.input_value()
+                try:
+                    curr = inp.input_value()
+                except Exception:
+                    curr = inp.inner_text()
                 if curr and len(curr.strip()) > 0:
                     continue
 
                 label = ""
                 try:
                     # Look for preceding label or parent question text
-                    label_el = inp.locator("xpath=../../preceding-sibling::* | ../preceding-sibling::* | preceding-sibling::* | ../label | ancestor::div[contains(@class, 'question') or contains(@class, 'form')][1]").first
+                    label_el = inp.locator("xpath=../../preceding-sibling::* | ../preceding-sibling::* | preceding-sibling::* | ../label | ancestor::div[contains(@class, 'question') or contains(@class, 'form') or contains(@class, 'group')][1]").first
                     if label_el.count() > 0:
                         label = label_el.inner_text().strip()
                 except Exception:
@@ -124,99 +131,132 @@ def handle_hirist_screening(job_page, profile: Profile, title: str, company: str
 
                 if ans:
                     inp.scroll_into_view_if_needed()
-                    inp.fill(str(ans))
-                    time.sleep(0.3)
+                    try:
+                        inp.fill(str(ans))
+                    except Exception:
+                        inp.click()
+                        job_page.keyboard.type(str(ans), delay=10)
+                    inp.dispatch_event("input")
+                    inp.dispatch_event("change")
+                    inp.dispatch_event("blur")
+                    time.sleep(0.2)
                     print(f"    Auto-filled '{label[:30]}': {str(ans)[:30]}")
         except Exception as e:
             print(f"    (Note on Hirist text fields: {e})")
 
-        # 2. Answer Radio Buttons
+        # 2. Answer Radio Buttons & Checkboxes (scoped per question block)
         try:
-            question_blocks = job_page.locator(".question-text, .form-group, div[class*='question' i]").all()
+            question_blocks = job_page.locator(".question-text, .form-group, div[class*='question' i], div[class*='form-field' i], div[class*='radio' i]").all()
             for q_block in question_blocks:
                 if not q_block.is_visible():
                     continue
                 q_text = q_block.inner_text().strip()
-                container = q_block.locator("xpath=..")
-                
-                radios = container.locator("input[type='radio']").all()
+                if not q_text:
+                    continue
+
+                radios = q_block.locator("input[type='radio'], input[type='checkbox'], label[class*='radio'], label[class*='checkbox'], div[class*='option']").all()
                 if radios:
-                    ans = get_screening_answer(f"Question: {q_text}. Options: Yes, No.", profile, job_context)
-                    if ans and "yes" in str(ans).lower():
-                        yes_r = container.locator("label:has-text('Yes'), span:has-text('Yes'), input[type='radio'][value*='yes' i]").first
-                        if yes_r.is_visible():
-                            yes_r.click(force=True)
-                            print(f"    Auto-selected 'Yes' for '{q_text[:35]}'")
-                    elif ans and "no" in str(ans).lower():
-                        no_r = container.locator("label:has-text('No'), span:has-text('No'), input[type='radio'][value*='no' i]").first
-                        if no_r.is_visible():
-                            no_r.click(force=True)
-                            print(f"    Auto-selected 'No' for '{q_text[:35]}'")
-                    else:
-                        first_r = radios[0]
-                        if first_r.is_visible():
-                            first_r.click(force=True)
-        except Exception:
-            pass
+                    ans = get_screening_answer(q_text, profile, job_context)
+                    ans_str = str(ans).lower() if ans else "yes"
+
+                    clicked_opt = False
+                    for r in radios:
+                        lbl = r.inner_text().strip().lower()
+                        val = (r.get_attribute("value") or "").lower()
+                        if (ans_str in lbl or ans_str in val or
+                            ("yes" in ans_str and "yes" in lbl) or
+                            ("no" in ans_str and "no" in lbl)):
+                            r.scroll_into_view_if_needed()
+                            r.click(force=True)
+                            print(f"    Selected '{lbl or val}' for '{q_text[:35]}'")
+                            clicked_opt = True
+                            break
+                    if not clicked_opt and radios:
+                        radios[0].click(force=True)
+        except Exception as e:
+            print(f"    (Note on Hirist radios: {e})")
 
         # 3. Answer Select Dropdowns
         try:
             selects = job_page.locator("select").all()
             for sel in selects:
-                if sel.is_visible():
+                if sel.is_visible() and not sel.is_disabled():
                     opts = sel.locator("option").all()
                     if len(opts) > 1:
                         sel.select_option(index=1)
+                        sel.dispatch_event("change")
                         time.sleep(0.2)
         except Exception:
             pass
 
-        # 4. Click Next / Save & Next / Submit / Apply Action Button
-        action_selectors = [
-            "button:has-text('Next')",
-            "button:has-text('Next Step')",
-            "button:has-text('Save & Next')",
-            "button:has-text('Submit Application')",
-            "button:has-text('Submit')",
-            "button:has-text('Apply')",
-            "button:has-text('Save & Continue')",
-            "button:has-text('Proceed')",
-            "button:has-text('Confirm')",
-            "input[type='submit']",
-            "button[type='submit']",
-            "button.btn-primary",
-            "button[class*='primary' i]"
-        ]
-
-        action_clicked = False
-        for sel in action_selectors:
-            btns = job_page.locator(sel).all()
-            for btn in btns:
-                if btn.is_visible() and not btn.is_disabled():
-                    btn_text = btn.inner_text().strip()
-                    print(f"    Clicking Hirist action: '{btn_text}' (Step {step + 1})...")
-                    try:
-                        btn.scroll_into_view_if_needed()
-                        time.sleep(0.2)
-                        btn.click(timeout=2500, force=True)
-                        time.sleep(2)
-                        action_clicked = True
-                        break
-                    except Exception:
+        # 3b. Handle Resume / File upload if present on Hirist
+        try:
+            file_inputs = job_page.locator("input[type='file'], input[name*='resume' i], input[name*='cv' i]").all()
+            if file_inputs:
+                from common.resume_selector import get_resume_path
+                resume_path = get_resume_path(profile, job_context=job_context)
+                if resume_path and resume_path.is_file():
+                    for fi in file_inputs:
                         try:
-                            btn.evaluate("el => el.click()")
-                            time.sleep(2)
-                            action_clicked = True
+                            fi.set_input_files(str(resume_path.resolve()))
+                            print(f"    Auto-uploaded role-targeted resume: {resume_path.name}")
+                            time.sleep(1)
                             break
                         except Exception:
                             pass
-            if action_clicked:
+        except Exception:
+            pass
+
+        # 4. Click Next / Save & Next / Submit / Apply Action Button
+        # Check all possible elements: button, a, div[role="button"], span[role="button"], input[type="submit"]
+        action_clicked = False
+        for wait_i in range(5):
+            clicked_label = job_page.evaluate("""
+                () => {
+                    const candidates = Array.from(document.querySelectorAll(
+                        'button, a, div[role="button"], span[role="button"], input[type="submit"], input[type="button"], .btn, [class*="btn-"], [class*="button"], [class*="next"], [class*="submit"]'
+                    ));
+                    
+                    const actionPhrases = [
+                        'submit application', 'submit', 'apply now', 'apply',
+                        'save & next', 'save and next', 'next step', 'next',
+                        'save & continue', 'save and continue', 'proceed',
+                        'continue', 'confirm', 'finish', 'done'
+                    ];
+
+                    for (const phrase of actionPhrases) {
+                        const target = candidates.find(el => {
+                            if (!el || el.offsetParent === null) return false;
+                            const text = (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().toLowerCase();
+                            const cls = (el.className || '').toLowerCase();
+                            const disabled = el.hasAttribute('disabled') || cls.includes('disabled');
+                            if (disabled) return false;
+                            return text === phrase || text.startsWith(phrase) || text.includes(phrase);
+                        });
+
+                        if (target) {
+                            target.scrollIntoView({behavior: 'instant', block: 'center'});
+                            target.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, view: window}));
+                            target.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, view: window}));
+                            target.click();
+                            return target.innerText || target.value || phrase;
+                        }
+                    }
+                    return null;
+                }
+            """)
+            if clicked_label:
+                print(f"    Clicking Hirist action: '{clicked_label.strip()}' (Step {step + 1})...")
+                action_clicked = True
+                time.sleep(2.0)
                 break
+            time.sleep(0.4)
 
         if not action_clicked:
             break
 
     return True
+
 
 
 def run(limit: int | None = None):
@@ -344,13 +384,16 @@ def run(limit: int | None = None):
                         job_page.goto(job_url, wait_until="domcontentloaded", timeout=15000)
                         time.sleep(2)
                         
-                        apply_btn = job_page.locator("button:has-text('Apply'), a:has-text('Apply')").first
-                        if apply_btn.count() > 0:
+                        apply_btn = job_page.locator("button:has-text('Apply'), a:has-text('Apply'), button[class*='apply' i], a[class*='apply' i], .apply-btn, #apply-button").first
+                        if apply_btn.count() > 0 and apply_btn.is_visible():
                             btn_text = apply_btn.inner_text().strip().lower()
                             if "company website" in btn_text or "external" in btn_text:
                                 print("  External application. Logging to CSV.")
                                 log_row([datetime.now().isoformat(), "hirist", title, company, "skipped", "external link"])
                                 log_external_job("hirist", title, company, job_url, job_page.url, "", exp_text, posted_text)
+                            elif "applied" in btn_text or "already applied" in btn_text:
+                                print(f"  Already applied to {title} @ {company}.")
+                                applied_keys.add(_job_key(title, company))
                             else:
                                 print("  Found Apply button! Clicking...")
                                 apply_btn.click()
@@ -362,7 +405,19 @@ def run(limit: int | None = None):
                                 # Check if successfully applied
                                 time.sleep(2)
                                 page_text = job_page.locator("body").inner_text(timeout=1000).lower()
-                                if "/job/applied" in job_page.url or "applied" in page_text or "application submitted" in page_text:
+                                page_url = job_page.url.lower()
+                                is_success = (
+                                    "/job/applied" in page_url
+                                    or "/success" in page_url
+                                    or "applied successfully" in page_text
+                                    or "application submitted" in page_text
+                                    or "thank you for applying" in page_text
+                                    or "application has been received" in page_text
+                                    or "application sent" in page_text
+                                    or "you have applied" in page_text
+                                    or job_page.locator("button:has-text('Applied'), a:has-text('Applied')").count() > 0
+                                )
+                                if is_success:
                                     applied += 1
                                     applied_keys.add(_job_key(title, company))
                                     print(f"  ✅ Successfully applied: {title} @ {company} ({applied} total this run)")

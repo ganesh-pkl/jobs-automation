@@ -332,6 +332,21 @@ def handle_screening_form(page, profile: Profile, job_title: str, company: str) 
                 except Exception:
                     pass
 
+        # 4b. Handle Resume / File upload in modal if present
+        file_inputs = container.locator("input[type='file'], input[name*='resume' i], input[name*='cv' i]").all()
+        if file_inputs:
+            from common.resume_selector import get_resume_path
+            resume_path = get_resume_path(profile, job_context=job_context)
+            if resume_path and resume_path.is_file():
+                for fi in file_inputs:
+                    try:
+                        fi.set_input_files(str(resume_path.resolve()))
+                        print(f"    Auto-uploaded role-targeted resume: {resume_path.name}")
+                        time.sleep(1)
+                        break
+                    except Exception:
+                        pass
+
         # 5. Find and Click Action Button (Next / Submit / Continue / Apply / Proceed)
         action_selectors = [
             "button:has-text('Next')",

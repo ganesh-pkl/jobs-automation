@@ -57,20 +57,6 @@ EXCLUDED_UNRELATED = [
 
 OUTREACH_CATEGORIES = [
     {
-        "category": "AI Engineer",
-        "default_quota": 3,
-        "search_roles": [
-            "AI Engineer",
-            "AI Software Engineer",
-            "AI/LLM Engineer",
-            "Generative AI Developer",
-            "Machine Learning Engineer",
-        ],
-        "recruiter_query": '"Technical Recruiter" AND ("AI" OR "Machine Learning" OR "LLM" OR "GenAI")',
-        "recruiter_note_role": "AI & Full-Stack Engineer",
-        "recruiter_note_pitch": "LLMs, LangChain, RAG, Python/FastAPI & React",
-    },
-    {
         "category": "Full Stack",
         "default_quota": 5,
         "search_roles": [
@@ -101,70 +87,60 @@ OUTREACH_CATEGORIES = [
         "recruiter_note_role": "Backend Developer",
         "recruiter_note_pitch": "Python/FastAPI, Java/Spring Boot & microservices",
     },
+    {
+        "category": "AI Engineer",
+        "default_quota": 3,
+        "search_roles": [
+            "AI Engineer",
+            "AI Software Engineer",
+            "AI/LLM Engineer",
+            "Generative AI Developer",
+            "Machine Learning Engineer",
+        ],
+        "recruiter_query": '"Technical Recruiter" AND ("AI" OR "Machine Learning" OR "LLM" OR "GenAI")',
+        "recruiter_note_role": "AI & Full-Stack Engineer",
+        "recruiter_note_pitch": "LLMs, LangChain, RAG, Python/FastAPI & React",
+    },
 ]
 
 
 def compute_category_quotas(limit: int = 10) -> dict[str, int]:
     """
     Computes exact role category quotas.
-    Default distribution for 10 requests: 3 AI Engineer, 5 Full Stack, 2 Backend.
+    Default distribution for 10 requests: 5 Full Stack, 2 Backend, 3 AI Engineer.
     """
     if limit == 10:
-        return {"AI Engineer": 3, "Full Stack": 5, "Backend": 2}
+        return {"Full Stack": 5, "Backend": 2, "AI Engineer": 3}
 
-    # Proportional scaling for custom limit: 30% AI, 50% Full Stack, 20% Backend
-    q_ai = max(0, int(round(limit * 0.3)))
+    # Proportional scaling for custom limit: 50% Full Stack, 20% Backend, 30% AI
     q_fs = max(0, int(round(limit * 0.5)))
-    q_be = max(0, limit - q_ai - q_fs)
+    q_be = max(0, int(round(limit * 0.2)))
+    q_ai = max(0, limit - q_fs - q_be)
 
-    while q_ai + q_fs + q_be > limit:
+    while q_fs + q_be + q_ai > limit:
         if q_fs > 1:
             q_fs -= 1
         elif q_ai > 1:
             q_ai -= 1
         elif q_be > 0:
             q_be -= 1
-    while q_ai + q_fs + q_be < limit:
+    while q_fs + q_be + q_ai < limit:
         q_fs += 1
 
-    return {"AI Engineer": q_ai, "Full Stack": q_fs, "Backend": q_be}
+    return {"Full Stack": q_fs, "Backend": q_be, "AI Engineer": q_ai}
 
 
 def get_search_locations(profile: Profile) -> list[str]:
-    """Loads full international country and tech hub location list matching normal LinkedIn flow."""
-    locations = []
-    configured = profile.data.get("remote_locations")
-    if configured and isinstance(configured, list):
-        for loc in configured:
-            if loc and loc not in locations and loc.lower() != "remote":
-                locations.append(loc)
-
-    global_countries = [
+    """Prioritizes high-yield search locations: Worldwide Remote, India, Bengaluru/Hyderabad, and US Remote."""
+    locs = [
         "Worldwide",
-        "United States",
-        "United Kingdom",
-        "Canada",
-        "Germany",
-        "Netherlands",
-        "Australia",
-        "Ireland",
-        "Singapore",
-        "United Arab Emirates",
-        "New Zealand",
-        "European Union",
-        "Switzerland",
-        "Sweden",
         "India",
+        "Bengaluru",
+        profile.current_city or "Hyderabad",
+        "United States",
     ]
-    for c in global_countries:
-        if c not in locations:
-            locations.append(c)
-
-    for city in [profile.current_city, *profile.relocate_cities]:
-        if city and city not in locations:
-            locations.append(city)
-
-    return locations
+    seen = set()
+    return [x for x in locs if x and not (x in seen or seen.add(x))]
 
 
 def is_job_match(title: str, target_role: str, profile: Profile) -> tuple[bool, str]:
@@ -205,6 +181,39 @@ def is_job_match(title: str, target_role: str, profile: Profile) -> tuple[bool, 
             return False, "title lacks Full-Stack/Software keywords"
 
     return True, "ok"
+
+
+def is_international_location(loc: str) -> bool:
+    """Returns True if the search location is outside India (e.g. Worldwide, US, UK, Germany, etc.)."""
+    loc_l = (loc or "").lower()
+    india_markers = ["india", "hyderabad", "bengaluru", "bangalore", "pune", "delhi", "noida", "gurgaon", "gurugram", "chennai", "mumbai"]
+    return not any(m in loc_l for m in india_markers)
+
+
+def is_job_location_eligible(location_text: str, workplace_type: str, job_desc: str, profile: Profile) -> tuple[bool, str]:
+    """
+    Validates that positions outside India are 100% remote.
+    Foreign on-site or foreign hybrid roles are strictly excluded.
+    """
+    loc_l = (location_text or "").lower()
+    wp_l = (workplace_type or "").lower()
+    combined = f"{loc_l} {wp_l} {(job_desc or '')[:400].lower()}"
+
+    # Check for strict exclusion fences (e.g. US Only / Europe Only where candidate cannot work)
+    if any(fence in combined for fence in ["us only", "usa only", "uk only", "europe only", "must reside in the us", "must be based in the us", "must reside in us", "latin america only", "latam only"]):
+        return False, "remote geo-fenced outside India"
+
+    # If it is explicitly marked Remote or Worldwide
+    if "remote" in wp_l or "remote" in loc_l or "worldwide" in loc_l or "anywhere" in loc_l:
+        return True, "remote"
+
+    # If it is inside India (Hyderabad, Bengaluru, etc.)
+    india_markers = ["india", "hyderabad", "bengaluru", "bangalore", "pune", "delhi", "noida", "gurgaon", "gurugram", "chennai", "mumbai"]
+    if any(m in loc_l for m in india_markers):
+        return True, "local India"
+
+    # Otherwise, it is an on-site or hybrid position in a foreign country
+    return False, f"foreign on-site/hybrid ({location_text or 'outside India'})"
 
 
 def get_chrome_channel() -> str | None:
@@ -309,7 +318,12 @@ def run_outreach(limit: int = 10, dry_run: bool = False):
                             break
 
                         start_offset = (page_num - 1) * 25
-                        search_url = f"https://www.linkedin.com/jobs/search/?f_TPR=r604800&keywords={encoded_role}&location={encoded_loc}&sortBy=DD&start={start_offset}"
+                        if is_international_location(loc):
+                            # Strictly filter for 100% Remote (f_WT=2) for all international locations
+                            search_url = f"https://www.linkedin.com/jobs/search/?f_TPR=r604800&keywords={encoded_role}&location={encoded_loc}&f_WT=2&sortBy=DD&start={start_offset}"
+                        else:
+                            # Local search (India / Hyderabad / Bengaluru)
+                            search_url = f"https://www.linkedin.com/jobs/search/?f_TPR=r604800&keywords={encoded_role}&location={encoded_loc}&sortBy=DD&start={start_offset}"
 
                         try:
                             page.goto(search_url, wait_until="domcontentloaded", timeout=25000)
@@ -343,6 +357,13 @@ def run_outreach(limit: int = 10, dry_run: bool = False):
                                 job_title = page.evaluate("() => (document.querySelector('.job-details-jobs-unified-top-card__job-title, h1, .jobs-unified-top-card__job-title')?.innerText || '').trim()")
                                 company = page.evaluate("() => (document.querySelector('.job-details-jobs-unified-top-card__company-name, .jobs-unified-top-card__company-name, [class*=\"company-name\"]')?.innerText || '').trim()") or "Company"
                                 job_desc = page.evaluate("() => (document.querySelector('.jobs-description, #job-details, .job-details-module')?.innerText || '').slice(0, 1000)")
+                                job_loc = page.evaluate("() => (document.querySelector('.job-details-jobs-unified-top-card__primary-description-container, .jobs-unified-top-card__primary-description, [class*=\"primary-description\"]')?.innerText || '').trim()")
+                                workplace_type = page.evaluate("() => (document.querySelector('.jobs-unified-top-card__workplace-type, [class*=\"workplace-type\"], .ui-label')?.innerText || '').trim()")
+
+                                # Strict validation of job location (Remote or local India only)
+                                loc_ok, loc_reason = is_job_location_eligible(job_loc, workplace_type, job_desc, profile)
+                                if not loc_ok:
+                                    continue
 
                                 # Detect apply type (Easy Apply vs External Company Portal)
                                 apply_type = page.evaluate("""() => {
@@ -388,10 +409,12 @@ def run_outreach(limit: int = 10, dry_run: bool = False):
                                     time.sleep(1.0)
                                 else:
                                     success = send_recruiter_connection_request(page, recruiter_info, job_title, company, profile, job_description=job_desc)
+                                    contacted_set.add(rec_key)
+                                    if rec_url:
+                                        contacted_set.add(rec_url)
                                     if success:
                                         category_counts[cat_name] += 1
                                         sent_this_run += 1
-                                        contacted_set.add(rec_key)
                                         cooldown = random.uniform(12.0, 18.0)
                                         print(f"   ⏳ Human pacing cooldown: waiting {cooldown:.1f}s before next recruiter...")
                                         time.sleep(cooldown)

@@ -27,9 +27,6 @@ DEFAULT_USER_AGENT = (
 )
 
 LINKEDIN_RESTRICTION_PHRASES = [
-    "checkpoint",
-    "authwall",
-    "challenge",
     "security verification",
     "verify it's you",
     "unusual activity",
@@ -37,6 +34,13 @@ LINKEDIN_RESTRICTION_PHRASES = [
     "temporarily restricted",
     "account restricted",
     "captcha",
+    "security challenge",
+    "verification challenge",
+    "solve this puzzle",
+    "solve the puzzle",
+    "please solve the puzzle",
+    "prove you're a person",
+    "prove you're human",
     "you've reached the weekly invitation limit",
     "reached the weekly invitation limit",
     "reached the limit for invitations",
@@ -45,12 +49,9 @@ LINKEDIN_RESTRICTION_PHRASES = [
     "you're out of free inmails",
     "out of free inmails",
     "easy apply limit",
-    "application limit",
     "maximum number of easy apply",
     "reached the limit for easy apply",
     "reached the easy apply limit",
-    "try again tomorrow",
-    "come back tomorrow",
 ]
 
 

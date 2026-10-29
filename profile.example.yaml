@@ -98,7 +98,16 @@ max_pages_per_role: 5
 #                  than a real (even minimized) one -- slightly higher risk
 browser_mode: "visible"
 
-resume_file_name: "your_resume.pdf"   # must match the filename already uploaded to Naukri/LinkedIn, and sit in this same project folder
+resume_file_name: "Ganesh_Pirikirala_FullStack_Resume.pdf"   # default fallback resume
+
+# Optional: Custom role-to-resume overrides (smart automatic matching is enabled by default)
+# role_resumes:
+#   "AI Engineer": "resumes/Ganesh_Pirikirala_AI_Engineer_Resume.pdf"
+#   "AI Full Stack": "resumes/Ganesh_Pirikirala_AI_FullStack_Resume.pdf"
+#   "Java": "resumes/Ganesh_Pirikirala_Java_FullStack_Resume.pdf"
+#   "MERN": "resumes/Ganesh_Pirikirala_MERN_Stack_Resume.pdf"
+#   "MEAN": "resumes/Ganesh_Pirikirala_MEAN_Stack_Resume.pdf"
+#   "Full Stack": "resumes/Ganesh_Pirikirala_FullStack_Resume.pdf"
 
 # LinkedIn Recruiter Outreach Automation (<=200 char note)
 connect_with_hiring_manager: true

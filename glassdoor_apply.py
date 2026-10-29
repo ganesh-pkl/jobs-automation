@@ -635,21 +635,43 @@ def handle_indeed_smartapply_flow(apply_page, profile: Profile, job_title: str, 
 
         # 3. Resume Selection Module
         if "resume-selection-module" in curr_url or "add a resume" in page_content or "select a resume" in page_content:
-            # If resume already uploaded and selected, just click Continue
+            from common.resume_selector import get_resume_path
+            resume_path = get_resume_path(profile, job_context=job_title)
+
+            # Check for file upload input
+            file_input = apply_page.locator('input[type="file"]').first
+            if file_input.is_visible() and resume_path and resume_path.is_file():
+                try:
+                    file_input.set_input_files(str(resume_path.resolve()))
+                    print(f"  (Uploaded role-targeted resume: {resume_path.name})")
+                    time.sleep(2)
+                except Exception:
+                    pass
+            elif resume_path:
+                # If radio options exist for uploaded resumes, select the one matching target resume
+                try:
+                    target_name = resume_path.name
+                    apply_page.evaluate("""(targetName) => {
+                        const radios = Array.from(document.querySelectorAll('input[type="radio"]'));
+                        if (radios.length > 0) {
+                            let matched = radios.find(r => {
+                                const container = r.closest('label, div, li');
+                                return container && container.innerText.toLowerCase().includes(targetName.toLowerCase());
+                            });
+                            const rToClick = matched || (!radios.some(r => r.checked) ? radios[0] : null);
+                            if (rToClick) {
+                                rToClick.click();
+                                rToClick.dispatchEvent(new Event('change', {bubbles: true}));
+                            }
+                        }
+                    }""", target_name)
+                except Exception:
+                    pass
+
             continue_btn = apply_page.locator('button:has-text("Continue"), button:has-text("Next")').first
             if continue_btn.is_visible():
                 continue_btn.click()
                 continue
-            else:
-                # Check for file upload input
-                file_input = apply_page.locator('input[type="file"]').first
-                if file_input.is_visible() and Path(profile.resume_file_name).exists():
-                    file_input.set_input_files(str(Path(profile.resume_file_name).resolve()))
-                    time.sleep(2)
-                    continue_btn = apply_page.locator('button:has-text("Continue"), button:has-text("Next")').first
-                    if continue_btn.is_visible():
-                        continue_btn.click()
-                        continue
 
         # 4. Questions Module
         if "questions-module" in curr_url or "answer these questions" in page_content or "questions from the employer" in page_content:

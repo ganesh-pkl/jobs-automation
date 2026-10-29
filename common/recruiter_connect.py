@@ -407,7 +407,7 @@ def _handle_invitation_modal(page, note: str, dry_run: bool = False) -> bool:
             print(f"  [Recruiter Connect] ⚠️ {reason} — stopping outreach immediately.")
             return False
 
-        # Step 0b: Check for intermediate "How do you know" dialog inside an actual dialog container
+        # Step 0b: Check for intermediate "How do you know" / "Choose why you want to connect" dialog
         page.evaluate("""() => {
             const modals = Array.from(document.querySelectorAll('dialog, [role="dialog"], .send-invite, .artdeco-modal, div[data-view-name*="send-invite"]'));
             for (const modal of modals) {
@@ -432,10 +432,26 @@ def _handle_invitation_modal(page, note: str, dry_run: bool = False) -> bool:
         }""")
         time.sleep(1.2)
 
+        # Step 0c: Check if modal asks for an email address to connect
+        asks_email = page.evaluate("""() => {
+            const modals = Array.from(document.querySelectorAll('dialog, [role="dialog"], .send-invite, .artdeco-modal'));
+            return modals.some(m => {
+                const t = (m.innerText || '').toLowerCase();
+                return t.includes('enter their email') || t.includes('email address to connect') || t.includes('please enter the email');
+            });
+        }""")
+        if asks_email:
+            print("  [Recruiter Connect] Recruiter requires email address to connect — skipping.")
+            page.evaluate("""() => {
+                const closeBtn = document.querySelector('dialog button[aria-label*="Dismiss" i], [role="dialog"] button[aria-label*="Dismiss" i], button[aria-label*="Close" i]');
+                if (closeBtn) closeBtn.click();
+            }""")
+            return False
+
         # Step 1: Check if textarea is already open; if not, click "Add a note" button
         textarea_loc = page.locator('textarea[name="message"], textarea#custom-message, [role="dialog"] textarea, .send-invite textarea, textarea').first
         if textarea_loc.count() == 0 or not textarea_loc.is_visible():
-            for _ in range(5):
+            for _ in range(6):
                 add_note_btn = page.locator('button:has-text("Add a note"), button[aria-label*="Add a note" i], button[aria-label*="Add note" i]').first
                 if add_note_btn.count() > 0 and add_note_btn.is_visible():
                     human_move_and_click(page, add_note_btn, delay_after=1.2)
@@ -459,16 +475,16 @@ def _handle_invitation_modal(page, note: str, dry_run: bool = False) -> bool:
 
         # Step 2: Ensure textarea is present and type the note with natural human cadence
         textarea = None
-        for _ in range(6):
+        for _ in range(8):
             loc = page.locator('textarea[name="message"], textarea#custom-message, [role="dialog"] textarea, .send-invite textarea, textarea').first
             if loc.count() > 0 and loc.is_visible():
                 textarea = loc
                 break
-            time.sleep(0.6)
+            time.sleep(0.5)
 
         if textarea is not None:
             # Human-like typing with randomized cadence and pause
-            human_type(page, textarea, note, min_delay_ms=25, max_delay_ms=75)
+            human_type(page, textarea, note, min_delay_ms=20, max_delay_ms=65)
             time.sleep(0.3)
             # Dispatch synthetic events to ensure character counter and send button update in React
             page.evaluate("""(text) => {
@@ -489,9 +505,9 @@ def _handle_invitation_modal(page, note: str, dry_run: bool = False) -> bool:
             return True
 
         # Step 3: Click real Send button (STRICTLY excluding 'Send without a note')
-        send_btn = page.locator('dialog button, [role="dialog"] button, .artdeco-modal button').filter(has_text=re.compile(r'^(?:Send|Done|Send now)$', re.I)).filter(has_not_text=re.compile(r'without', re.I)).first
+        send_btn = page.locator('dialog button, [role="dialog"] button, .artdeco-modal button').filter(has_text=re.compile(r'^(?:Send|Done|Send now|Send invitation)$', re.I)).filter(has_not_text=re.compile(r'without', re.I)).first
         if send_btn.count() == 0:
-            send_btn = page.locator('button[aria-label*="Send invitation" i], button[aria-label*="Send now" i], button:has-text("Send")').filter(has_not_text=re.compile(r'without', re.I)).first
+            send_btn = page.locator('button[aria-label*="Send invitation" i], button[aria-label*="Send now" i], button:has-text("Send invitation"), button:has-text("Send")').filter(has_not_text=re.compile(r'without', re.I)).first
 
         if send_btn.count() > 0 and send_btn.is_visible():
             human_move_and_click(page, send_btn, delay_after=2.5)
@@ -502,7 +518,7 @@ def _handle_invitation_modal(page, note: str, dry_run: bool = False) -> bool:
             const btns = Array.from(document.querySelectorAll('dialog button, [role="dialog"] button, .artdeco-modal button, button')).filter(b => b.getBoundingClientRect().width > 0);
             for (const b of btns) {
                 const t = (b.innerText || b.getAttribute('aria-label') || '').trim().toLowerCase();
-                if ((t === 'send' || t === 'done' || t === 'send now' || t.includes('send invitation')) && !t.includes('without')) {
+                if ((t === 'send' || t === 'done' || t === 'send now' || t === 'send invitation' || t.includes('send invitation')) && !t.includes('without')) {
                     b.click();
                     return true;
                 }
@@ -538,59 +554,108 @@ def _send_connection_via_profile_tab(context, profile_url: str, note: str, dry_r
         follow_recruiter(tab)
         time.sleep(1.0)
 
-        # 2. Check direct Connect or More actions menu on top card
-        result = tab.evaluate("""() => {
+        # 2. Wait up to 5s for profile action buttons to render
+        for _ in range(5):
+            has_buttons = tab.evaluate("""() => {
+                const btns = Array.from(document.querySelectorAll('button, a[role="button"]'));
+                return btns.some(b => {
+                    const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase();
+                    return t.includes('connect') || t.includes('more') || t.includes('message') || t.includes('follow');
+                });
+            }""")
+            if has_buttons:
+                break
+            time.sleep(0.8)
+
+        # 3. Check for direct Connect, already connected/pending, or More (3 dots)
+        click_result = tab.evaluate("""() => {
             const topCard = document.querySelector('main section, [data-view-name*="profile-card"], .pv-top-card, .scaffold-layout__main') || document.querySelector('main') || document;
             const btns = Array.from(topCard.querySelectorAll('button, a[role="button"]')).filter(b => !b.closest('aside') && b.getBoundingClientRect().width > 0);
             
-            let connectBtn = null;
-            let moreBtn = null;
+            // Check if already 1st degree or pending
             for (const b of btns) {
                 const t = (b.innerText || '').trim().toLowerCase();
                 const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
-                const isConnect = (t === 'connect' || t === '+ connect' || t === '+connect' || t.includes('connect') || aria.includes('connect') || aria.includes('invite')) &&
-                                  !t.includes('pending') && !aria.includes('pending') && !t.includes('remove') && !t.includes('withdraw') && !t.includes('message') && !t.includes('following');
-                if (isConnect && !connectBtn) {
-                    connectBtn = b;
-                }
-                if (aria === 'more' || aria === 'more actions' || t === 'more' || aria.includes('more actions') || t === '…') {
-                    moreBtn = b;
+                if (t === 'pending' || aria.includes('pending') || t.includes('withdraw')) {
+                    return 'already_pending';
                 }
             }
-            
-            if (connectBtn) {
-                connectBtn.scrollIntoView({behavior: 'instant', block: 'center'});
-                connectBtn.click();
-                return 'clicked_direct_connect';
-            } else if (moreBtn) {
-                moreBtn.click();
+
+            // 1. Look for direct Connect button
+            for (const b of btns) {
+                const t = (b.innerText || '').trim().toLowerCase();
+                const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                const isConnect = (t === 'connect' || t === '+ connect' || t === '+connect' || aria.startsWith('invite ') || aria.startsWith('connect with') || (aria.includes('connect') && !aria.includes('pending') && !aria.includes('remove') && !aria.includes('message')));
+                if (isConnect && !t.includes('message') && !t.includes('following') && !t.includes('pending')) {
+                    b.scrollIntoView({behavior: 'instant', block: 'center'});
+                    b.click();
+                    return 'clicked_direct_connect';
+                }
+            }
+
+            // 2. Look for More (3 dots) button
+            for (const b of btns) {
+                const t = (b.innerText || '').trim().toLowerCase();
+                const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                const isMore = aria.includes('more action') || aria === 'more' || t === 'more' || t === '…' || b.classList.contains('artdeco-dropdown__trigger');
+                if (isMore) {
+                    b.scrollIntoView({behavior: 'instant', block: 'center'});
+                    b.click();
+                    return 'clicked_more';
+                }
+            }
+
+            // 3. Fallback: Any button with overflow / dots icon
+            const moreByIcon = Array.from(topCard.querySelectorAll('button')).find(b => {
+                const svg = b.querySelector('svg');
+                if (!svg) return false;
+                const icon = (svg.getAttribute('data-test-app-aware-icon') || '').toLowerCase();
+                return icon.includes('overflow') || icon.includes('dots');
+            });
+            if (moreByIcon) {
+                moreByIcon.click();
                 return 'clicked_more';
             }
+
             return 'none_found';
         }""")
 
-        if result == 'clicked_more':
-            time.sleep(1.5)
-            # Find "Connect" inside role="menu" or dropdown
+        if click_result == 'already_pending':
+            print(f"  [Recruiter Connect] Connection already pending for {profile_url} — skipping.")
+            return False
+
+        if click_result == 'clicked_more':
+            time.sleep(1.2)
+            # Find and click "Connect" inside the open dropdown menu
             menu_clicked = tab.evaluate("""() => {
-                const items = Array.from(document.querySelectorAll('[role="menu"] [role="menuitem"], [role="menu"] a, .artdeco-dropdown__content [role="menuitem"], .artdeco-dropdown__content a, .artdeco-dropdown__content button, [class*="dropdown-item"]'));
-                for (const item of items) {
-                    const t = (item.innerText || '').toLowerCase();
-                    const key = (item.getAttribute('componentkey') || '').toLowerCase();
-                    const aria = (item.getAttribute('aria-label') || '').toLowerCase();
-                    if ((t.includes('connect') || key.includes('connect') || aria.includes('connect') || t.includes('invite') || aria.includes('invite')) && !t.includes('remove') && !t.includes('pending')) {
-                        item.click();
-                        return true;
+                const dropdowns = Array.from(document.querySelectorAll('.artdeco-dropdown__content, [role="menu"], div.artdeco-dropdown__content--is-open, div[class*="dropdown-content"]'));
+                for (const menu of dropdowns) {
+                    const items = Array.from(menu.querySelectorAll('[role="menuitem"], [role="button"], li, button, a, div[componentkey]'));
+                    for (const item of items) {
+                        const t = (item.innerText || '').trim().toLowerCase();
+                        const key = (item.getAttribute('componentkey') || '').toLowerCase();
+                        const aria = (item.getAttribute('aria-label') || '').toLowerCase();
+                        if ((t === 'connect' || t.includes('connect') || key.includes('connect') || aria.includes('connect') || t.includes('invite') || aria.includes('invite')) 
+                            && !t.includes('remove') && !t.includes('withdraw') && !t.includes('pending') && !t.includes('report') && !t.includes('block')) {
+                            item.click();
+                            return true;
+                        }
                     }
                 }
                 return false;
             }""")
             if not menu_clicked:
+                print(f"  [Recruiter Connect] 'Connect' not found in 'More' dropdown on {profile_url} (may require InMail/Email).")
                 try:
                     tab.keyboard.press("Escape")
                 except Exception:
                     pass
-            time.sleep(1.8)
+                return False
+            time.sleep(1.5)
+
+        if click_result == 'none_found':
+            print(f"  [Recruiter Connect] No connect or more actions button found on {profile_url}.")
+            return False
 
         return _handle_invitation_modal(tab, note, dry_run=dry_run)
     except Exception as e:

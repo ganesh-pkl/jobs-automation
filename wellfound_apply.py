@@ -365,8 +365,26 @@ def fill_pitch_note(container, title: str, company: str, profile: Profile) -> bo
     return False
 
 
-def fill_additional_screening_questions(container, profile: Profile):
-    """Fills any additional custom screening inputs present in the modal."""
+def fill_additional_screening_questions(container, profile: Profile, job_context: str = ""):
+    """Fills any additional custom screening inputs and uploads role-targeted resume if requested."""
+    try:
+        # Check for file / resume upload inputs
+        file_inputs = container.locator("input[type='file'], input[name*='resume' i], input[name*='cv' i]").all()
+        if file_inputs:
+            from common.resume_selector import get_resume_path
+            resume_path = get_resume_path(profile, job_context=job_context)
+            if resume_path and resume_path.is_file():
+                for fi in file_inputs:
+                    try:
+                        fi.set_input_files(str(resume_path.resolve()))
+                        print(f"    Auto-uploaded role-targeted resume: {resume_path.name}")
+                        time.sleep(1)
+                        break
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
     try:
         inputs = container.locator("input[type='text'], input[type='number'], input:not([type])").all()
         for inp in inputs:
@@ -385,7 +403,7 @@ def fill_additional_screening_questions(container, profile: Profile):
                     pass
             
             if label_text:
-                ans = get_screening_answer(label_text, profile)
+                ans = get_screening_answer(label_text, profile, job_context=job_context)
                 if ans:
                     inp.fill(str(ans))
                     time.sleep(0.2)
@@ -694,7 +712,7 @@ def run(role: str | None = None, limit: int | None = None, dry_run: bool = False
                 fill_pitch_note(modal, title, company, profile)
 
                 # Fill any additional custom screening questions
-                fill_additional_screening_questions(modal, profile)
+                fill_additional_screening_questions(modal, profile, job_context=f"{title} at {company}")
 
                 # Submit Application
                 print(f"    Clicking '{btn_text}'...")

@@ -159,6 +159,22 @@ def fill_uplers_modal(page, profile: Profile, job_title: str) -> bool:
                 inp.fill(ans)
                 print(f"  Auto-filled field '{lbl[:30]}': {ans[:30]}")
 
+    # 5b. Resume / File upload if requested by Uplers modal
+    file_inputs = modal.locator("input[type='file'], input[name*='resume' i], input[name*='cv' i]")
+    if file_inputs.count() > 0:
+        from common.resume_selector import get_resume_path
+        resume_path = get_resume_path(profile, job_context=job_title)
+        if resume_path and resume_path.is_file():
+            for i in range(file_inputs.count()):
+                try:
+                    f_inp = file_inputs.nth(i)
+                    f_inp.set_input_files(str(resume_path.resolve()))
+                    print(f"  Auto-uploaded role-targeted resume to Uplers: {resume_path.name}")
+                    time.sleep(1)
+                    break
+                except Exception:
+                    pass
+
     time.sleep(1)
 
     # 6. Click Submit (Input submit or Button)
@@ -197,14 +213,21 @@ def run(limit: int | None = None):
         page = context.new_page()
 
         print("\n--- Starting Uplers Automation ---")
-        page.goto("https://platform.uplers.com/talent/all-opportunities/")
+        try:
+            page.goto("https://platform.uplers.com/talent/all-opportunities/", wait_until="domcontentloaded", timeout=45000)
+        except PWTimeout:
+            print("  (Initial load timeout, checking if DOM rendered...)")
         
         try:
-            page.wait_for_selector(".jobCardContainer", timeout=15000)
+            page.wait_for_selector(".jobCardContainer, .job-card, [class*='jobCard'], [class*='opportunity']", timeout=20000)
         except PWTimeout:
-            print("No job cards loaded or session invalid.")
-            browser.close()
-            return
+            try:
+                page.reload(wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_selector(".jobCardContainer, .job-card, [class*='jobCard'], [class*='opportunity']", timeout=15000)
+            except Exception:
+                print("No job cards loaded or session invalid.")
+                browser.close()
+                return
             
         time.sleep(3) # Let all cards render
 
