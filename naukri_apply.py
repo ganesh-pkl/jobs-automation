@@ -24,6 +24,7 @@ from common import llm
 from common import learned_answers
 from common.human_input import ask_user
 from common import stats_tracker
+from common.answers import direct_profile_answer, get_screening_answer
 
 SESSION_FILE = "session_naukri.json"
 LOG_FILE = "applications_log.csv"
@@ -380,8 +381,8 @@ def _wait_send_enabled(page, timeout_ms: int = 4000) -> bool:
     while waited <= timeout_ms:
         enabled = safe_evaluate(page, """
             () => {
-                const root = document.querySelector('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container, div[role="dialog"]') || document;
-                const wrapper = root.querySelector('[id^="sendMsg__"], .send, .sendMsgbtn_container, button, .sendMsg, [class*="sendMsg"], [class*="save"]');
+                const root = document.querySelector('.chatbot_Drawer, ._chatBotContainer, [class*="chatbot_Drawer"]') || document;
+                const wrapper = root.querySelector('.sendMsg, [id^="sendMsg__"], .send, [class*="sendMsg"], [class*="save"]');
                 if (!wrapper) return true;
                 const cls = (wrapper.className || '').toLowerCase();
                 const disabledAttr = wrapper.getAttribute('disabled');
@@ -398,12 +399,19 @@ def _wait_send_enabled(page, timeout_ms: int = 4000) -> bool:
 
 def _js_click_send(page) -> bool:
     """Clicks Naukri's screening-chat Save/Send control or dispatches Enter event."""
-    # 1. First attempt: Playwright locator with real user pointer events
+    # 1. Attempt Enter key press on the active input if visible
     try:
-        root = page.locator('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container, div[role="dialog"]').first
-        target = root if root.count() > 0 else page
-        btn = target.locator(
-            '.sendMsg, [class*="sendMsg"], [id^="sendMsg"], .chatbot_Send, button:has-text("Save"), button:has-text("Send"), button:has-text("Submit"), button:has-text("Next"), button:has-text("Apply"), [aria-label="Send"], [aria-label="Save"]'
+        inp = page.locator('.chatbot_Drawer .textArea, .chatbot_Drawer [contenteditable="true"], [id^="userInput"]:visible, .chatbot_Drawer textarea').last
+        if inp.count() > 0 and inp.is_visible():
+            inp.press("Enter")
+            time.sleep(0.3)
+    except Exception:
+        pass
+
+    # 2. First attempt: Playwright locator with real user pointer events
+    try:
+        btn = page.locator(
+            '.chatbot_Drawer .sendMsg, .chatbot_Drawer [class*="sendMsg"], [id^="sendMsg"] .sendMsg, .sendMsg:visible, button:has-text("Save"):visible, button:has-text("Send"):visible'
         ).last
         if btn.count() > 0 and btn.is_visible():
             btn.scroll_into_view_if_needed()
@@ -413,14 +421,18 @@ def _js_click_send(page) -> bool:
     except Exception:
         pass
 
-    # 2. Second attempt: JavaScript synthetic event dispatch
+    # 3. Second attempt: JavaScript synthetic event dispatch
     return safe_evaluate(page, """
         () => {
-            const root = document.querySelector('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container, div[role="dialog"]') || document;
+            const root = document.querySelector('.chatbot_Drawer, ._chatBotContainer, [class*="chatbot_Drawer"]') || document;
             
             // Un-disable send containers if text is present
             const wrappers = root.querySelectorAll('[id^="sendMsg__"], .send, .sendMsgbtn_container');
-            wrappers.forEach(w => w.classList.remove('disabled'));
+            wrappers.forEach(w => {
+                w.classList.remove('disabled');
+                w.style.pointerEvents = 'auto';
+                w.style.opacity = '1';
+            });
 
             const btns = Array.from(root.querySelectorAll('.sendMsg, [class*="sendMsg"], [class*="saveMsg"], .chatbot_Send, [class*="sendButton"], [class*="saveButton"], button, div[role="button"], a[role="button"]'));
             const sendBtn = btns.find(b => {
@@ -603,7 +615,7 @@ def _get_options(page) -> list[dict]:
     """Reads radio/checkbox options and chip pills in the chat drawer, with their visible labels."""
     return safe_evaluate(page, """
         () => {
-            const root = document.querySelector('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container, div[role="dialog"]') || document;
+            const root = document.querySelector('.chatbot_Drawer, ._chatBotContainer, [class*="chatbot_Drawer"]') || document;
             
             // 1. Radio / Checkbox inputs
             const inputs = Array.from(root.querySelectorAll('input[type=radio], input[type=checkbox]'));
@@ -649,24 +661,50 @@ def _get_options(page) -> list[dict]:
 
 
 def _click_option(page, idx: int) -> bool:
+    """Clicks the option radio/checkbox/chip at idx and ensures the selection takes effect."""
     return safe_evaluate(page, """
         (idx) => {
-            const root = document.querySelector('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container, div[role="dialog"]') || document;
+            const root = document.querySelector('.chatbot_Drawer, ._chatBotContainer, [class*="chatbot_Drawer"]') || document;
+            
+            // 1. Radio / Checkbox inputs
             const inputs = Array.from(root.querySelectorAll('input[type=radio], input[type=checkbox]'));
             if (inputs[idx]) {
-                const el = inputs[idx];
-                el.scrollIntoView({behavior: 'instant', block: 'center'});
+                const input = inputs[idx];
                 const allLabels = Array.from(root.querySelectorAll('label'));
-                const lbl = el.labels?.[0] || (el.id ? allLabels.find(l => l.htmlFor === el.id || l.getAttribute('for') === el.id) : null);
-                const parent = el.closest('label, .ssrc__radio-btn-container, div');
-
-                el.click();
-                if (lbl) lbl.click();
-                else if (parent) parent.click();
-                el.dispatchEvent(new Event('input', {bubbles: true}));
-                el.dispatchEvent(new Event('change', {bubbles: true}));
+                let label = input.labels?.[0] || (input.id ? allLabels.find(l => l.htmlFor === input.id || l.getAttribute('for') === input.id) : null);
+                if (!label) {
+                    label = input.closest('label') || input.parentElement?.querySelector('label');
+                }
+                
+                // Click the label if present, else input
+                if (label) {
+                    label.scrollIntoView({behavior: 'instant', block: 'center'});
+                    label.click();
+                } else {
+                    input.scrollIntoView({behavior: 'instant', block: 'center'});
+                    input.click();
+                }
+                
+                input.checked = true;
+                input.dispatchEvent(new Event('input', {bubbles: true}));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+                
+                // Immediately un-disable send/save buttons in the drawer
+                const sendBtn = root.querySelector('[id^="sendMsg__"], .send, .sendMsg');
+                if (sendBtn) {
+                    sendBtn.classList.remove('disabled');
+                    sendBtn.removeAttribute('disabled');
+                    sendBtn.style.pointerEvents = 'auto';
+                }
+                const sendContainer = root.querySelector('[id^="sendMsgbtn_container"], .sendMsgbtn_container');
+                if (sendContainer) {
+                    sendContainer.classList.remove('disabled');
+                    sendContainer.style.pointerEvents = 'auto';
+                }
                 return true;
             }
+            
+            // 2. Chip buttons or option pills
             const chips = Array.from(root.querySelectorAll('.chatbot_Chip, .chipItem, .chatbot_ChipWrapper button, [class*="chipItem"], [class*="chip_"], [role="radio"]'));
             if (chips[idx]) {
                 chips[idx].scrollIntoView({behavior: 'instant', block: 'center'});
@@ -682,7 +720,7 @@ def _click_skip_question(page) -> bool:
     """Click Naukri's explicit skip chip for an inapplicable question."""
     return bool(safe_evaluate(page, """
         () => {
-            const root = document.querySelector('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container, div[role="dialog"]') || document;
+            const root = document.querySelector('.chatbot_Drawer, ._chatBotContainer, [class*="chatbot_Drawer"]') || document;
             const candidates = Array.from(root.querySelectorAll(
                 'button, [role="button"], .chatbot_Chip, .chipItem, span, div'
             ));
@@ -746,69 +784,6 @@ def _is_sensitive_field(question: str) -> bool:
 def _direct_profile_answer(question: str, answers: dict) -> str | None:
     """Answer only questions that unambiguously map to a profile fact."""
     lower_q = " ".join(question.lower().split())
-
-    # 1. Check Name and Contact fields
-    for phrase in TRIGGER_PHRASES["first_name"]:
-        if phrase in lower_q:
-            return str(answers.get("first_name", "Ganesh"))
-
-    for phrase in TRIGGER_PHRASES["last_name"]:
-        if phrase in lower_q:
-            return str(answers.get("last_name", "Pirikirala"))
-
-    for phrase in TRIGGER_PHRASES["full_name"]:
-        if phrase in lower_q:
-            return str(answers.get("full_name", "Ganesh Pirikirala"))
-
-    for phrase in TRIGGER_PHRASES["dob"]:
-        if phrase in lower_q:
-            return str(answers.get("dob", answers.get("date_of_birth", "10/06/2001")))
-
-    for phrase in TRIGGER_PHRASES["email"]:
-        if phrase in lower_q:
-            return str(answers.get("email", "ganesh.pkl08@gmail.com"))
-
-    for phrase in TRIGGER_PHRASES["phone"]:
-        if phrase in lower_q:
-            return str(answers.get("phone", "7659869814"))
-
-    # 2. Check Graduation / Education Years FIRST so "graduation year" is never mistaken for experience years
-    for phrase in TRIGGER_PHRASES["graduation_year"]:
-        if phrase in lower_q:
-            return str(answers.get("graduation_year", "2023"))
-
-    for phrase in TRIGGER_PHRASES["education_start_year"]:
-        if phrase in lower_q:
-            return str(answers.get("education_start_year", "2019"))
-
-    # 3. Check School / University / College Name
-    for phrase in TRIGGER_PHRASES["school_name"]:
-        if phrase in lower_q and not any(w in lower_q for w in ("degree", "grade", "gpa", "percentage", "cgpa")):
-            return str(answers.get("school_name", "Chaitanya Bharathi Institute of Technology"))
-
-    # 4. Check Degree & Field of Study
-    for phrase in TRIGGER_PHRASES["field_of_study"]:
-        if phrase in lower_q:
-            return str(answers.get("field_of_study", "Electronics and Communication Engineering"))
-
-    for phrase in TRIGGER_PHRASES["degree_name"]:
-        if phrase in lower_q:
-            return str(answers.get("degree_name", "Bachelor of Technology"))
-
-    # 5. Check Location & Postal fields
-    for phrase in TRIGGER_PHRASES["postal_code"]:
-        if phrase in lower_q:
-            return str(answers.get("postal_code", "500072"))
-
-    for phrase in TRIGGER_PHRASES["state_province"]:
-        if phrase in lower_q:
-            return str(answers.get("state_province", "Telangana"))
-
-    for phrase in TRIGGER_PHRASES["country_name"]:
-        if phrase in lower_q:
-            return str(answers.get("country_name", "India"))
-
-    # 6. Check Experience fields
     asks_skill_specific_experience = bool(
         re.search(
             r"\b(?:experience|years?)\b[^?]{0,80}\b(?:in|with|using|on)\s+(?!years?\b|yrs?\b|months?\b)[a-z0-9#+.]+",
@@ -824,17 +799,7 @@ def _direct_profile_answer(question: str, answers: dict) -> str | None:
             pass
         return None
 
-    if (
-        "years_experience" in answers
-        and not asks_skill_specific_experience
-        and any(phrase in lower_q for phrase in TOTAL_EXPERIENCE_PHRASES)
-    ):
-        return str(answers["years_experience"])
-
-    for key, phrases in TRIGGER_PHRASES.items():
-        if key in answers and any(phrase in lower_q for phrase in phrases):
-            return str(answers[key])
-    return None
+    return direct_profile_answer(question, answers)
 
 
 def _should_skip_question(question: str, profile: Profile) -> bool:
@@ -861,26 +826,36 @@ def _auto_decide_option(question: str, options: list[dict], profile: Profile) ->
         return None
 
     rules = [
-        (["interview", "virtual interview", "video interview", "video call", "telephonic", "f2f", "face to face", "online test", "assessment", "discussion", "available for interview", "available for virtual"],
+        (["military", "armed forces", "served in the military", "veteran", "ex-serviceman", "armed force"],
+         "Never served" if find_by_text("Never served") else "No"),
+        (["laid off", "layoff", "lay off", "got laid off", "reason for job change", "reason for leaving"],
+         "No" if find_by_text("No") else "Career Growth"),
+        (["interview", "virtual interview", "video interview", "video call", "telephonic", "f2f", "face to face", "online test", "assessment", "discussion", "available for interview", "available for virtual", "saturday", "weekend interview", "virtual round"],
          "Yes"),
         (["fill the form", "google form", "filled the form", "form link", "survey", "form:"],
          "Yes - Filled the form"),
-        (["laptop", "wifi", "internet", "broadband", "work from home setup", "wfh setup"],
+        (["laptop", "wifi", "internet", "broadband", "work from home setup", "wfh setup", "permanent remote", "remote setup", "hybrid", "remote work"],
          "Yes"),
         (["background check", "background verification", "bgv", "drug test", "reference check"],
          "Yes"),
         (["work authorization", "authorized to work", "valid passport", "eligible to work", "citizen"],
          "Yes"),
-        (["career break", "gap in career", "employment gap", "criminal", "court case", "pending legal", "disciplinary", "backlog"],
+        (["visa sponsorship", "require sponsorship", "need visa"],
          "No"),
-        (["ex-infosys", "ex infy", "worked in infosys", "previous employer"],
+        (["career break", "gap in career", "employment gap", "criminal", "court case", "pending legal", "disciplinary", "backlog", "bond"],
          "No"),
-        (["relocate", "relocation", "willing to move", "willing to relocate"],
+        (["ex-infosys", "ex infy", "worked in infosys", "previous employer", "ex-employee", "ex infy id"],
+         "No"),
+        (["gender", "sex"],
+         "Male"),
+        (["marital status"],
+         "Single" if find_by_text("Single") else "Unmarried"),
+        (["relocate", "relocation", "willing to move", "willing to relocate", "residing in bengaluru or willing", "relocate to bengaluru", "preferred location"],
          "Can Relocate All Over India" if find_by_text("Can Relocate All Over India") else ("Yes" if profile.data.get("relocate_cities") else "No")),
         (["night shift"], "Yes" if profile.data.get("night_shift_ok") else "No"),
         (["weekend"], "Yes" if profile.data.get("weekend_ok") else "No"),
-        (["immediately available", "immediate joiner", "ready to join"],
-         "Yes" if profile.data.get("immediately_available") else "No"),
+        (["immediately available", "immediate joiner", "ready to join", "notice period"],
+         "Immediate" if find_by_text("Immediate") else ("Immediate (0-15 Days)" if find_by_text("Immediate (0-15 Days)") else ("0-15 Days" if find_by_text("0-15 Days") else ("Yes" if profile.data.get("immediately_available") else "No")))),
         (["currently employed", "currently working"],
          "Yes" if profile.data.get("current_employer") else "No"),
     ]
@@ -895,6 +870,19 @@ def _auto_decide_option(question: str, options: list[dict], profile: Profile) ->
         yes_opt = find_by_text("Yes")
         if yes_opt:
             return yes_opt
+
+    # Match candidate primary and adjacent skills (e.g. "Django", "FastAPI", "React", "Python", etc.)
+    all_skills = [s.lower() for s in (profile.data.get("skills_primary", []) + profile.data.get("skills_adjacent", []))]
+    for opt in options:
+        opt_text = opt["label"].lower().strip()
+        if any(s == opt_text or f" {s} " in f" {opt_text} " for s in all_skills):
+            return opt
+
+    # Match role selection options (e.g. "Which technical requirement are you applying for?")
+    for role_kw in ("java", "full stack", "react", "spring boot", "backend", "software developer", "frontend", "python"):
+        matched_role_opt = find_by_text(role_kw)
+        if matched_role_opt:
+            return matched_role_opt
 
     # Auto-match experience range options (e.g. "1-3 years", "3-5 years", "3 years")
     exp_years = float(profile.total_experience_years or 3)
@@ -911,7 +899,7 @@ def _auto_decide_option(question: str, options: list[dict], profile: Profile) ->
                 return opt
 
     # Prefer Yes or positive option if present among choices
-    for pref in ("Yes - Filled the form", "Yes", "Immediate", "Immediate (0-15 Days)", "0-15 Days", "Can Relocate All Over India"):
+    for pref in ("Yes - Filled the form", "Yes", "Immediate", "Immediate (0-15 Days)", "0-15 Days", "Can Relocate All Over India", "Never served", "No"):
         opt = find_by_text(pref)
         if opt:
             return opt
@@ -925,53 +913,87 @@ def _handle_options_question(page, question: str, profile: Profile, timeout_s: i
     if not options:
         return False
 
-    sensitive = _is_sensitive_field(question)
-    if not sensitive:
-        stored = learned_answers.get_answer(question)
-        if stored:
-            for opt in options:
-                if opt["label"].strip().lower() == stored.strip().lower():
-                    _click_option(page, opt["idx"])
-                    print(f"  (used a remembered answer for: {question[:80]})")
-                    return True
+    answers = profile.answer_library()
 
-        auto = _auto_decide_option(question, options, profile)
-        if auto:
-            _click_option(page, auto["idx"])
-            learned_answers.save_answer(question, auto["label"])
-            print(f"  (auto-picked '{auto['label']}' from your profile for: {question[:80]})")
-            return True
+    # 1. Check direct profile fact matching against option labels first
+    direct_ans = direct_profile_answer(question, answers)
+    if direct_ans:
+        direct_norm = str(direct_ans).strip().lower()
+        for opt in options:
+            opt_lbl = opt["label"].strip().lower()
+            if opt_lbl == direct_norm or direct_norm in opt_lbl or opt_lbl in direct_norm:
+                _click_option(page, opt["idx"])
+                learned_answers.save_answer(question, opt["label"])
+                print(f"  (picked '{opt['label']}' from profile fact '{direct_ans}' for: {question[:80]})")
+                return True
 
-    options_text = "\n".join(f"  {o['idx']}: {o['label']}" for o in options)
-    response = ask_user(
-        f"Screening question needs a choice:\n{question}\n\nOptions:\n{options_text}\n"
-        f"Type the number of your choice (or numbers separated by commas for multi-select):",
-        timeout_seconds=timeout_s,
-    )
-    if response is None:
-        raise SkipJob(f"no response for options question: {question[:120]}")
+    # 2. Check remembered answer
+    stored = learned_answers.get_answer(question)
+    if stored:
+        for opt in options:
+            if opt["label"].strip().lower() == stored.strip().lower():
+                _click_option(page, opt["idx"])
+                print(f"  (used a remembered answer for: {question[:80]})")
+                return True
 
-    chosen_raw = [r.strip() for r in response.split(",") if r.strip()]
-    matches = []
-    for r in chosen_raw:
-        try:
-            idx = int(r)
-            match = next((o for o in options if o["idx"] == idx), None)
-        except ValueError:
-            match = next((o for o in options if o["label"].strip().lower() == r.lower()), None)
-        if match:
-            matches.append(match)
+    # 3. Auto-decide based on profile rules and known facts
+    auto = _auto_decide_option(question, options, profile)
+    if auto:
+        _click_option(page, auto["idx"])
+        learned_answers.save_answer(question, auto["label"])
+        print(f"  (auto-picked '{auto['label']}' from your profile for: {question[:80]})")
+        return True
 
-    if not matches:
-        raise SkipJob(f"couldn't match your response '{response}' to an option: {question[:120]}")
+    # 3b. Dynamic LLM screening answer matching if no direct rule matched
+    llm_ans = get_screening_answer(question, profile, "")
+    if llm_ans:
+        llm_norm = str(llm_ans).strip().lower()
+        for opt in options:
+            opt_lbl = opt["label"].strip().lower()
+            if opt_lbl == llm_norm or llm_norm in opt_lbl or opt_lbl in llm_norm:
+                _click_option(page, opt["idx"])
+                learned_answers.save_answer(question, opt["label"])
+                print(f"  (LLM-picked '{opt['label']}' for: {question[:80]})")
+                return True
 
-    for match in matches:
-        _click_option(page, match["idx"])
-    if not sensitive:
-        learned_answers.save_answer(
-            question, matches[0]["label"] if len(matches) == 1 else response
+    # 4. If sensitive and completely unresolved, ask user
+    if _is_sensitive_field(question):
+        options_text = "\n".join(f"  {o['idx']}: {o['label']}" for o in options)
+        response = ask_user(
+            f"Screening question needs a choice:\n{question}\n\nOptions:\n{options_text}\n"
+            f"Type the number of your choice (or numbers separated by commas for multi-select):",
+            timeout_seconds=timeout_s,
         )
-    return True
+        if response is None:
+            raise SkipJob(f"no response for options question: {question[:120]}")
+
+        chosen_raw = [r.strip() for r in response.split(",") if r.strip()]
+        matches = []
+        for r in chosen_raw:
+            try:
+                idx = int(r)
+                match = next((o for o in options if o["idx"] == idx), None)
+            except ValueError:
+                match = next((o for o in options if o["label"].strip().lower() == r.lower()), None)
+            if match:
+                matches.append(match)
+
+        if not matches:
+            raise SkipJob(f"no valid option chosen for: {question[:120]}")
+
+        for match in matches:
+            _click_option(page, match["idx"])
+            learned_answers.save_answer(question, match["label"])
+        return True
+
+    # 5. Default fallback: Pick the first available option
+    if options:
+        _click_option(page, options[0]["idx"])
+        learned_answers.save_answer(question, options[0]["label"])
+        print(f"  (fallback-picked first option '{options[0]['label']}' for: {question[:80]})")
+        return True
+
+    return False
 
 
 # If the chat's last message is one of these, it's wrapping up rather than
@@ -982,7 +1004,9 @@ COMPLETION_PHRASES = [
     "thank you for your response", "thank you for your responses",
     "we will get back", "responses have been recorded", "no further questions",
     "application submitted", "application was submitted", "that's all",
-    "all the information we need",
+    "all the information we need", "application has been sent",
+    "your application has been sent", "sent to the recruiter",
+    "successfully applied", "received your application",
 ]
 
 
@@ -992,14 +1016,14 @@ def _is_completion_message(text: str) -> bool:
 
 
 def _has_answerable_input(page, timeout_ms: int = 3000) -> bool:
-    """Checks for a text box, textarea, or radio/checkbox to answer."""
+    """Checks for a text box, textarea, or radio/checkbox/dob widget to answer."""
     waited = 0
     step = 300
     while waited <= timeout_ms:
         found = safe_evaluate(page, """
             () => !!(document.querySelector('[id^="userInput"], .textArea, [contenteditable="true"], input[type="text"], input[placeholder*="message" i], textarea, .chat-input, [class*="inputBox"]') ||
                      document.querySelector(
-                         'input[type=radio], input[type=checkbox], input[type=file], .chatbot_Chip, .chipItem, [class*="radio-btn"]'
+                         'input[type=radio], input[type=checkbox], input[type=file], .chatbot_Chip, .chipItem, [class*="radio-btn"], .dob__container, .dob__input-container, .dob__input, input.day, input.month, input.year, input[type="date"]'
                      ))
         """, default=False)
         if found:
@@ -1011,12 +1035,16 @@ def _has_answerable_input(page, timeout_ms: int = 3000) -> bool:
 
 def _read_filled_text(page) -> str:
     try:
-        drawer = page.locator('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container, div[role="dialog"]').first
-        root = drawer if drawer.count() > 0 else page
-        inp = root.locator(
-            '[id^="userInput"], .textArea, input[placeholder*="message" i], input[placeholder*="type" i], input[type="text"], textarea, [contenteditable="true"], .chat-input input'
+        inp = page.locator(
+            '.chatbot_Drawer .textArea, .chatbot_Drawer [contenteditable="true"], [id^="userInput"]:visible, .textArea:visible'
         ).last
         if inp.count() > 0 and inp.is_visible():
+            try:
+                val = inp.input_value()
+                if val and val.strip():
+                    return val.strip()
+            except Exception:
+                pass
             val = inp.inner_text() or ""
             if val.strip():
                 return val.strip()
@@ -1025,12 +1053,75 @@ def _read_filled_text(page) -> str:
 
     return safe_evaluate(page, """
         () => {
-            const root = document.querySelector('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container, div[role="dialog"]') || document;
+            const root = document.querySelector('.chatbot_Drawer, ._chatBotContainer, [class*="chatbot_Drawer"]') || document;
             const ed = root.querySelector('[id^="userInput"], .textArea, input[placeholder*="message" i], input[placeholder*="type" i], input[type="text"], textarea, .chat-input input, .chat-input, [class*="inputBox"] input, [class*="inputBox"], [contenteditable="true"]');
             if (!ed) return '';
             return (ed.value || ed.innerText || ed.textContent || '').trim();
         }
     """, default="") or ""
+
+
+def _fill_freetext(page, text: str):
+    """Fills answer in Naukri screening drawer (contenteditable div or input/textarea)."""
+    text_str = str(text).strip()
+    # 1. First attempt: Playwright native locator + fill / keyboard typing
+    try:
+        inp = page.locator(
+            '.chatbot_Drawer .textArea, .chatbot_Drawer [contenteditable="true"], [id^="userInput"]:visible, .textArea:visible'
+        ).last
+        if inp.count() > 0 and inp.is_visible():
+            inp.scroll_into_view_if_needed()
+            try:
+                inp.fill(text_str, timeout=2000)
+                time.sleep(0.2)
+            except Exception:
+                inp.click(force=True)
+                time.sleep(0.1)
+                page.keyboard.press("Control+A")
+                page.keyboard.press("Backspace")
+                page.keyboard.press("Meta+A")
+                page.keyboard.press("Backspace")
+                time.sleep(0.05)
+                page.keyboard.type(text_str, delay=15)
+                time.sleep(0.2)
+    except Exception:
+        pass
+
+    # 2. JavaScript fallback and state synchronization
+    safe_evaluate(page, """
+        (text) => {
+            const root = document.querySelector('.chatbot_Drawer, ._chatBotContainer, [class*="chatbot_Drawer"]') || document;
+            const ed = root.querySelector('[id^="userInput"], .textArea[contenteditable="true"], .textArea, [contenteditable="true"], input[placeholder*="message" i], input[placeholder*="type" i], textarea, input[type="text"], .chat-input input, .chat-input, [class*="inputBox"] input, [class*="inputBox"]');
+            if (ed) {
+                ed.scrollIntoView({behavior: 'instant', block: 'center'});
+                ed.focus();
+                if (ed.tagName === 'INPUT' || ed.tagName === 'TEXTAREA') {
+                    let proto = window.HTMLInputElement.prototype;
+                    if (ed.tagName === 'TEXTAREA') proto = window.HTMLTextAreaElement.prototype;
+                    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                    if (setter) setter.call(ed, text);
+                    else ed.value = text;
+                    ed.dispatchEvent(new Event('input', {bubbles: true}));
+                    ed.dispatchEvent(new Event('change', {bubbles: true}));
+                    ed.dispatchEvent(new Event('blur', {bubbles: true}));
+                } else {
+                    ed.innerText = text;
+                    ed.dispatchEvent(new InputEvent('input', {bubbles: true, cancelable: true, inputType: 'insertText', data: text}));
+                    ed.dispatchEvent(new Event('input', {bubbles: true}));
+                    ed.dispatchEvent(new Event('change', {bubbles: true}));
+                    ed.dispatchEvent(new Event('blur', {bubbles: true}));
+                }
+            }
+
+            // Un-disable save/send wrapper
+            const sendWraps = root.querySelectorAll('.send, [id^="sendMsg__"], .sendMsgbtn_container');
+            sendWraps.forEach(w => {
+                w.classList.remove('disabled');
+                w.style.pointerEvents = 'auto';
+                w.style.opacity = '1';
+            });
+        }
+    """, arg=text_str)
 
 
 def _fill_and_send(page, text: str, question: str):
@@ -1048,17 +1139,141 @@ def _fill_and_send(page, text: str, question: str):
     time.sleep(2.0)  # give Naukri's backend a moment to actually save it
 
 
+def _parse_dob_parts(dob_raw: str) -> tuple[str, str, str]:
+    """Parses a DOB string into (day, month, year) strings padded to 2, 2, 4 digits."""
+    digits = re.findall(r"\d+", str(dob_raw or "").strip())
+    if len(digits) >= 3:
+        if len(digits[0]) == 4:  # YYYY-MM-DD
+            year, month, day = digits[0], digits[1], digits[2]
+        else:  # DD-MM-YYYY or DD/MM/YYYY
+            day, month, year = digits[0], digits[1], digits[2]
+        return day.zfill(2), month.zfill(2), year.zfill(4)
+    return "10", "06", "2001"
+
+
+def _handle_dob_question(page, question: str, profile: Profile) -> bool:
+    """Answers Naukri screening chat Date of Birth widget or input."""
+    lower_q = (question or "").lower()
+    is_dob_q = any(p in lower_q for p in ("date of birth", "dob", "born on", "birth date", "birthdate", "d.o.b", "when were you born"))
+    has_dob_widget = safe_evaluate(page, """
+        () => {
+            const root = document.querySelector('.chatbot_Drawer, ._chatBotContainer, [class*="chatbot_Drawer"]') || document;
+            return !!root.querySelector('.dob__container, .dob__input-container, .dob__input, input.day, input.month, input.year, input[type="date"]');
+        }
+    """, default=False)
+
+    if not (is_dob_q or has_dob_widget):
+        return False
+
+    dob_val = (
+        profile.data.get("dob")
+        or profile.data.get("date_of_birth")
+        or profile.data.get("birth_date")
+        or "10/06/2001"
+    )
+    day, month, year = _parse_dob_parts(str(dob_val))
+
+    # 1. Fill 3-box widget (.dob__input or input.day/month/year)
+    try:
+        day_loc = page.locator('.chatbot_Drawer input.day, .chatbot_Drawer .dob__input.day, .dob__input.day').first
+        month_loc = page.locator('.chatbot_Drawer input.month, .chatbot_Drawer .dob__input.month, .dob__input.month').first
+        year_loc = page.locator('.chatbot_Drawer input.year, .chatbot_Drawer .dob__input.year, .dob__input.year').first
+        if day_loc.count() > 0 and month_loc.count() > 0 and year_loc.count() > 0:
+            day_loc.fill(day)
+            month_loc.fill(month)
+            year_loc.fill(year)
+    except Exception:
+        pass
+
+    filled_boxes = safe_evaluate(page, """
+        ({d, m, y}) => {
+            const root = document.querySelector('.chatbot_Drawer, ._chatBotContainer, [class*="chatbot_Drawer"]') || document;
+            const dayInput = root.querySelector('input.day, .dob__input.day, input[placeholder*="DD" i], input[name*="day" i]');
+            const monthInput = root.querySelector('input.month, .dob__input.month, input[placeholder*="MM" i], input[name*="month" i]');
+            const yearInput = root.querySelector('input.year, .dob__input.year, input[placeholder*="YYYY" i], input[name*="year" i]');
+
+            if (dayInput && monthInput && yearInput) {
+                const setVal = (el, val) => {
+                    el.focus();
+                    const proto = window.HTMLInputElement.prototype;
+                    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                    if (setter) setter.call(el, val);
+                    else el.value = val;
+                    el.dispatchEvent(new Event('input', {bubbles: true}));
+                    el.dispatchEvent(new Event('change', {bubbles: true}));
+                    el.dispatchEvent(new Event('blur', {bubbles: true}));
+                };
+                setVal(dayInput, d);
+                setVal(monthInput, m);
+                setVal(yearInput, y);
+
+                const sendWrap = root.querySelector('.send, [id^="sendMsg__"], .sendMsgbtn_container');
+                if (sendWrap) {
+                    sendWrap.classList.remove('disabled');
+                    sendWrap.style.pointerEvents = 'auto';
+                }
+                return true;
+            }
+            return false;
+        }
+    """, arg={"d": day, "m": month, "y": year}, default=False)
+
+    if filled_boxes:
+        time.sleep(0.5)
+        _wait_send_enabled(page, timeout_ms=3000)
+        _js_click_send(page)
+        print(f"  (filled 3-box date-of-birth: {day}/{month}/{year})")
+        return True
+
+    # 2. Fill native date input
+    filled_date = safe_evaluate(page, """
+        ({y, m, d}) => {
+            const root = document.querySelector('.chatbot_Drawer, ._chatBotContainer, [class*="chatbot_Drawer"]') || document;
+            const dateInp = root.querySelector('input[type="date"]');
+            if (dateInp) {
+                dateInp.focus();
+                const isoVal = `${y}-${m}-${d}`;
+                const proto = window.HTMLInputElement.prototype;
+                const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                if (setter) setter.call(dateInp, isoVal);
+                else dateInp.value = isoVal;
+                dateInp.dispatchEvent(new Event('input', {bubbles: true}));
+                dateInp.dispatchEvent(new Event('change', {bubbles: true}));
+                return true;
+            }
+            return false;
+        }
+    """, arg={"y": year, "m": month, "d": day}, default=False)
+
+    if filled_date:
+        time.sleep(0.5)
+        _wait_send_enabled(page, timeout_ms=3000)
+        _js_click_send(page)
+        print(f"  (filled date input: {year}-{month}-{day})")
+        return True
+
+    # 3. Standard contenteditable textarea or text input
+    dob_formatted = f"{day}-{month}-{year}" if any(k in lower_q for k in ("-", "hyphen", "dd-mm")) else f"{day}/{month}/{year}"
+    _fill_and_send(page, dob_formatted, question)
+    print(f"  (filled date-of-birth: {dob_formatted})")
+    return True
+
+
 def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: int):
     """Handles Naukri's post-apply screening chat drawer, if it appears."""
-    from common.answers import get_screening_answer, direct_profile_answer
     answers = profile.answer_library()
     try:
         page.wait_for_selector(
-            '[class*="chatbot_Drawer"], [class*="chatbot"], [class*="botMsg"], .chat-container, [class*="chat-drawer"], [class*="drawer"]',
-            timeout=4000,
+            '.chatbot_Drawer, [class*="chatbot_Drawer"], [class*="botMsg"], [class*="chat-drawer"], ._chatBotContainer',
+            timeout=9000,
         )
     except PWTimeout:
-        return  # no screening chat for this listing
+        # Check if drawer element is in DOM even if animation or connection was delayed
+        drawer_present = safe_evaluate(page, """
+            () => !!document.querySelector('.chatbot_Drawer, ._chatBotContainer, [class*="chatbot_Drawer"], [class*="botMsg"]')
+        """, default=False)
+        if not drawer_present:
+            return  # no screening chat for this listing
 
     last_question = ""
     same_q_count = 0
@@ -1072,7 +1287,7 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
         # Check if drawer closed
         drawer_exists = safe_evaluate(page, """
             () => {
-                const drawer = document.querySelector('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container');
+                const drawer = document.querySelector('.chatbot_Drawer, [class*="chatbot_Drawer"], ._chatBotContainer, .chat-container');
                 if (!drawer) return false;
                 const style = window.getComputedStyle(drawer);
                 return style.display !== 'none' && style.visibility !== 'hidden' && drawer.offsetParent !== null;
@@ -1082,7 +1297,7 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
             break
 
         bubbles = page.query_selector_all(
-            '.botMsg, [class*="botMsg"], [class*="botMessage"], [class*="msgContainer"], [class*="msgText"], .msg-text, [class*="chatbot"] p, [class*="messageBubble"], [class*="chatBubble"], [class*="bot-msg"], div[class*="bubble"]'
+            '.chatbot_Drawer .botMsg, [class*="chatbot_Drawer"] .botMsg, .botMsg, [class*="botMsg"], [class*="botMessage"], [class*="msgContainer"], [class*="msgText"], .msg-text, [class*="chatbot"] p, [class*="messageBubble"], [class*="chatBubble"], [class*="bot-msg"], div[class*="bubble"]'
         )
         if not bubbles:
             break
@@ -1130,6 +1345,10 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
         if _upload_resume(page, profile, question, job_context=job_context):
             continue
 
+        if _handle_dob_question(page, question, profile):
+            time.sleep(2.0)
+            continue
+
         options = _get_options(page)
         if options:
             _handle_options_question(page, question, profile, timeout_s)
@@ -1148,6 +1367,7 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
         # 1. Direct profile fact check (DOB, skill experience e.g. Python, total experience, CTC, location, etc.)
         direct_ans = direct_profile_answer(question, answers)
         if direct_ans is not None:
+            print(f"  [Profile Fact] Question: {question[:80]} -> Answer: {direct_ans}")
             _fill_and_send(page, direct_ans, question)
             learned_answers.save_answer(question, direct_ans)
             time.sleep(2.0)
@@ -1160,80 +1380,26 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
             )
             if response is None:
                 raise SkipJob(f"no response for sensitive field: {question[:120]}")
+            print(f"  [User Input] Question: {question[:80]} -> Answer: {response}")
             _fill_and_send(page, response, question)
             continue
 
         stored = learned_answers.get_answer(question)
         if stored:
+            print(f"  [Remembered Answer] Question: {question[:80]} -> Answer: {stored}")
             _fill_and_send(page, stored, question)
-            print(f"  (used a remembered answer for: {question[:80]})")
             continue
 
-        # 2. Comprehensive screening answer generator (Groq LLM + smart typed profile fallbacks)
+        # 2. Comprehensive screening answer generator (Groq/Ollama LLM + smart typed profile fallbacks)
         ans = get_screening_answer(question, profile, job_context=job_context)
         if ans is not None:
+            print(f"  [AI Screening Answer] Question: {question[:80]} -> Answer: {ans}")
             _fill_and_send(page, ans, question)
             time.sleep(2.0)
             continue
 
 
-def _fill_freetext(page, text: str):
-    """Fills answer in Naukri screening drawer (contenteditable div or input/textarea)."""
-    # 1. First attempt: Playwright native locator + real keyboard typing
-    try:
-        drawer = page.locator('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container, div[role="dialog"]').first
-        root = drawer if drawer.count() > 0 else page
-        inp = root.locator(
-            '[id^="userInput"], .textArea[contenteditable="true"], [contenteditable="true"], input[placeholder*="message" i], input[placeholder*="type" i], textarea, input[type="text"], .chat-input input'
-        ).last
-        if inp.count() > 0 and inp.is_visible():
-            inp.scroll_into_view_if_needed()
-            inp.click(force=True)
-            time.sleep(0.1)
-            # Clear text via Meta+A / Backspace
-            page.keyboard.press("Meta+A")
-            page.keyboard.press("Backspace")
-            page.keyboard.press("Control+A")
-            page.keyboard.press("Backspace")
-            time.sleep(0.05)
-            page.keyboard.type(str(text), delay=20)
-            time.sleep(0.2)
-            return
-    except Exception:
-        pass
 
-    # 2. JavaScript fallback
-    safe_evaluate(page, """
-        (text) => {
-            const root = document.querySelector('[class*="chatbot_Drawer"], [class*="drawer"], [class*="chat-drawer"], .chat-container, div[role="dialog"]') || document;
-            const ed = root.querySelector('[id^="userInput"], .textArea[contenteditable="true"], [contenteditable="true"], input[placeholder*="message" i], input[placeholder*="type" i], textarea, input[type="text"], .chat-input input, .chat-input, [class*="inputBox"] input, [class*="inputBox"]');
-            if (!ed) return;
-            ed.scrollIntoView({behavior: 'instant', block: 'center'});
-            ed.focus();
-            if (ed.tagName === 'INPUT' || ed.tagName === 'TEXTAREA') {
-                let proto = window.HTMLInputElement.prototype;
-                if (ed.tagName === 'TEXTAREA') proto = window.HTMLTextAreaElement.prototype;
-                const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-                if (setter) setter.call(ed, text);
-                else ed.value = text;
-                ed.dispatchEvent(new Event('input', {bubbles: true}));
-                ed.dispatchEvent(new Event('change', {bubbles: true}));
-                ed.dispatchEvent(new Event('blur', {bubbles: true}));
-            } else {
-                try {
-                    document.execCommand('selectAll', false, null);
-                    document.execCommand('insertText', false, text);
-                } catch(e) {}
-                if (!ed.innerText || ed.innerText.trim() !== text.trim()) {
-                    ed.innerText = text;
-                }
-                ed.dispatchEvent(new InputEvent('input', {bubbles: true, cancelable: true, inputType: 'insertText', data: text}));
-                ed.dispatchEvent(new Event('input', {bubbles: true}));
-                ed.dispatchEvent(new Event('change', {bubbles: true}));
-                ed.dispatchEvent(new Event('blur', {bubbles: true}));
-            }
-        }
-    """, arg=str(text))
 
 
 def build_naukri_search_url(role: str, page_no: int, profile: Profile) -> str:

@@ -185,18 +185,38 @@ def resolve_file_on_disk(filename: str) -> Optional[Path]:
 def select_resume(
     job_title: str = "",
     job_description: str = "",
-    profile: Any = None
+    company: str = "",
+    profile: Any = None,
+    generate_dynamic: bool = True
 ) -> Tuple[Optional[Path], str]:
     """
     Selects the optimal resume path given a job title, job description, and applicant profile.
     Analyzes both Title and JD keywords to pick the most relevant resume.
+    When company or JD context is provided and dynamic generation is enabled,
+    compiles a job-specific ATS LaTeX resume on-the-fly.
 
     Returns:
         (resume_path, reason_string)
     """
     title_clean = (job_title or "").strip()
     jd_clean = (job_description or "").strip()
+    comp_clean = (company or "").strip()
     full_context = f"{title_clean} {jd_clean}".strip()
+
+    # Dynamic On-The-Fly ATS Resume Generation (if company/JD is provided)
+    if generate_dynamic and (comp_clean or (profile and getattr(profile, "data", {}).get("generate_dynamic_resumes") is True)):
+        try:
+            from common.resume_generator import generate_targeted_resume
+            dyn_path, dyn_reason = generate_targeted_resume(
+                job_title=title_clean,
+                company=comp_clean,
+                job_description=jd_clean,
+                profile=profile
+            )
+            if dyn_path and dyn_path.is_file():
+                return dyn_path, dyn_reason
+        except Exception:
+            pass  # Fallback to static matching on any error
 
     # 1. Check custom user mappings in profile if configured (e.g. profile.data.get("role_resumes"))
     if profile is not None and hasattr(profile, "data") and isinstance(profile.data, dict):
@@ -311,15 +331,47 @@ def select_resume(
     return None, "no resume found on disk"
 
 
-def get_resume_path(profile: Any = None, job_context: str = "", job_description: str = "") -> Optional[Path]:
+def get_resume_path(
+    profile: Any = None,
+    job_context: str = "",
+    job_description: str = "",
+    company: str = "",
+    generate_dynamic: bool = True
+) -> Optional[Path]:
     """
-    Drop-in replacement for legacy _resume_path(profile) that also accepts optional job_context and job_description.
+    Drop-in replacement for legacy _resume_path(profile) that also accepts optional job_context, job_description, and company.
+    Parses 'Title at Company' format automatically if company is not explicitly passed.
     """
-    path, _ = select_resume(job_title=job_context, job_description=job_description, profile=profile)
+    title = (job_context or "").strip()
+    comp = (company or "").strip()
+    if not comp and title:
+        # Check if job_context has "Title at Company" or "Title @ Company"
+        m = re.search(r"^(.*?)\s+(?:at|@)\s+(.*?)$", title, re.IGNORECASE)
+        if m:
+            title = m.group(1).strip()
+            comp = m.group(2).strip()
+
+    path, _ = select_resume(
+        job_title=title,
+        job_description=job_description,
+        company=comp,
+        profile=profile,
+        generate_dynamic=generate_dynamic
+    )
     return path
 
 
-def get_targeted_resume_name(job_context: str = "", job_description: str = "", profile: Any = None) -> str:
-    """Returns the filename of the targeted resume for the given job context and JD."""
-    path = get_resume_path(profile, job_context=job_context, job_description=job_description)
+def get_targeted_resume_name(
+    job_context: str = "",
+    job_description: str = "",
+    company: str = "",
+    profile: Any = None
+) -> str:
+    """Returns the filename of the targeted resume for the given job context, JD, and company."""
+    path = get_resume_path(
+        profile=profile,
+        job_context=job_context,
+        job_description=job_description,
+        company=company
+    )
     return path.name if path else DEFAULT_RESUME_NAME

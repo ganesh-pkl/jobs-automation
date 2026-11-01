@@ -56,6 +56,21 @@ class AnswersModuleTests(unittest.TestCase):
         self.assertEqual(get_screening_answer("Led a team or project ?*", self.profile), "3")
         self.assertEqual(get_screening_answer("Data engineering ?", self.profile), "3")
 
+    def test_naukri_drawer_screening_answers(self):
+        answers = self.profile.answer_library()
+        # DOB variations
+        self.assertEqual(direct_profile_answer("DOB ( Date of Birth )", answers), "10/06/2001")
+        self.assertEqual(direct_profile_answer("Please enter your date of birth (DD-MM-YYYY)", answers), "10-06-2001")
+        self.assertEqual(direct_profile_answer("When were you born? (Born on)", answers), "10/06/2001")
+        # Military, layoff, interview, remote, employer ID
+        self.assertEqual(direct_profile_answer("Have you ever served in the military?", answers), "Never served")
+        self.assertEqual(direct_profile_answer("Have you ever been laid off?", answers), "No")
+        self.assertEqual(direct_profile_answer("Are you available to take an interview on Saturday?", answers), "Yes")
+        self.assertEqual(direct_profile_answer("Are you comfortable in working permanent remote?", answers), "Yes")
+        self.assertEqual(direct_profile_answer("Ex-Infosys employee id (or ex infy id)", answers), "NA")
+        self.assertEqual(direct_profile_answer("Please specify your Gender", answers), "Male")
+        self.assertEqual(direct_profile_answer("What is your marital status?", answers), "Single")
+
     @patch("common.learned_answers.get_answer", return_value=None)
     @patch("common.llm.draft_answer", return_value="I have 3 years of experience in React and Node.js.")
     def test_llm_dynamic_answer_used(self, mock_llm, mock_learned):

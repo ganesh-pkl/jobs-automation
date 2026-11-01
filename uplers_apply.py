@@ -81,7 +81,7 @@ def count_applications_today() -> int:
                     pass
     return count
 
-def fill_uplers_modal(page, profile: Profile, job_title: str) -> bool:
+def fill_uplers_modal(page, profile: Profile, job_title: str, company: str = "") -> bool:
     """Fills all fields in the Uplers screening modal and submits."""
     from datetime import datetime, timedelta
     from common.answers import get_screening_answer
@@ -163,7 +163,7 @@ def fill_uplers_modal(page, profile: Profile, job_title: str) -> bool:
     file_inputs = modal.locator("input[type='file'], input[name*='resume' i], input[name*='cv' i]")
     if file_inputs.count() > 0:
         from common.resume_selector import get_resume_path
-        resume_path = get_resume_path(profile, job_context=job_title)
+        resume_path = get_resume_path(profile, job_context=f"{job_title} at {company}", company=company)
         if resume_path and resume_path.is_file():
             for i in range(file_inputs.count()):
                 try:
@@ -313,7 +313,7 @@ def run(limit: int | None = None):
                     visible_btn.click(timeout=5000)
                     time.sleep(2)
                     
-                    fill_uplers_modal(page, profile, card_title)
+                    fill_uplers_modal(page, profile, card_title, company=card_company)
                         
                     # Log success
                     applied += 1

@@ -19,7 +19,7 @@ TRIGGER_PHRASES = {
     "first_name": ["first name", "given name", "forename"],
     "last_name": ["last name", "family name", "surname"],
     "full_name": ["full name", "your name", "candidate name", "applicant name"],
-    "dob": ["date of birth", "dob", "birth date", "birthdate", "d.o.b"],
+    "dob": ["date of birth", "dob", "birth date", "birthdate", "d.o.b", "born on"],
     "email": ["email address", "email id", "e-mail", "email"],
     "phone": ["mobile number", "phone number", "contact number", "mobile", "phone"],
     "graduation_year": [
@@ -122,7 +122,48 @@ def direct_profile_answer(question: str, answers: dict) -> str | None:
 
     for phrase in TRIGGER_PHRASES["dob"]:
         if phrase in lower_q:
-            return str(answers.get("dob", answers.get("date_of_birth", "10/06/2001")))
+            raw_dob = str(answers.get("dob") or answers.get("date_of_birth") or "10/06/2001").strip()
+            digits = re.findall(r"\d+", raw_dob)
+            if len(digits) >= 3:
+                if len(digits[0]) == 4:
+                    y, m, d = digits[0], digits[1].zfill(2), digits[2].zfill(2)
+                else:
+                    d, m, y = digits[0].zfill(2), digits[1].zfill(2), digits[2]
+            else:
+                d, m, y = "10", "06", "2001"
+            if any(k in lower_q for k in ("-", "hyphen", "dd-mm")):
+                return f"{d}-{m}-{y}"
+            return f"{d}/{m}/{y}"
+
+    # Military service / Veteran status
+    if any(w in lower_q for w in ("served in the military", "military service", "military", "armed forces", "veteran", "ex-serviceman")):
+        return "Never served"
+
+    # Layoff / Termination questions
+    if any(w in lower_q for w in ("laid off", "layoff", "lay off", "got laid off")):
+        return "No"
+
+    # Ex-employer / Infosys ID questions
+    if any(w in lower_q for w in ("ex infy id", "infy id", "infosys id", "ex-infy", "ex infy", "ex-employee id", "previous employee id")):
+        return "NA"
+
+    # Weekend / Saturday interview availability
+    if any(w in lower_q for w in ("interview on saturday", "interview on sunday", "available to take an interview", "saturday interview", "weekend interview", "virtual round")):
+        return "Yes"
+
+    # Permanent remote / WFH comfort
+    if any(w in lower_q for w in ("permanent remote", "comfortable in working permanent remote", "remote setup", "wfh setup", "work from home setup")):
+        return "Yes"
+
+    # Current residing and preferred location
+    if ("preferred location" in lower_q or "preffered location" in lower_q) and ("residing" in lower_q or "current" in lower_q or "location" in lower_q):
+        return "Hyderabad, Bengaluru"
+
+    # Gender / Marital status
+    if any(w in lower_q for w in ("gender", "sex")) and not any(w in lower_q for w in ("preference", "bias")):
+        return "Male"
+    if "marital status" in lower_q:
+        return "Single"
 
     for phrase in TRIGGER_PHRASES["email"]:
         if phrase in lower_q:
@@ -258,6 +299,7 @@ def direct_profile_answer(question: str, answers: dict) -> str | None:
                 return "0"
         except (TypeError, ValueError):
             pass
+        return None
 
     if (
         "years_experience" in answers

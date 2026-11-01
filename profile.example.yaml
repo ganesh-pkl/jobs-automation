@@ -99,6 +99,7 @@ max_pages_per_role: 5
 browser_mode: "visible"
 
 resume_file_name: "Ganesh_Pirikirala_FullStack_Resume.pdf"   # default fallback resume
+generate_dynamic_resumes: true   # on-the-fly ATS LaTeX resume tailoring & compilation per job application (LinkedIn, Naukri, etc.)
 
 # Optional: Custom role-to-resume overrides (smart automatic matching is enabled by default)
 # role_resumes:

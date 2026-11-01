@@ -1472,11 +1472,12 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
             print(f"  ❌ Skipped: {job_title} @ {company} (Job requires {req_exp}+ yrs exp — strictly exceeds {max_exp_ceiling} yrs ceiling)")
             return False
 
-    # Select targeted resume based on BOTH Title and Job Description
+    # Select targeted resume based on Title, Company, and Job Description
     from common.resume_selector import select_resume
     target_resume, match_reason = select_resume(
         job_title=job_title,
         job_description=detail_text,
+        company=company,
         profile=profile
     )
     if target_resume:

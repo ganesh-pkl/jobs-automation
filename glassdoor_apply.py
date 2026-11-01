@@ -636,7 +636,7 @@ def handle_indeed_smartapply_flow(apply_page, profile: Profile, job_title: str, 
         # 3. Resume Selection Module
         if "resume-selection-module" in curr_url or "add a resume" in page_content or "select a resume" in page_content:
             from common.resume_selector import get_resume_path
-            resume_path = get_resume_path(profile, job_context=job_title)
+            resume_path = get_resume_path(profile, job_context=f"{job_title} at {company}", company=company)
 
             # Check for file upload input
             file_input = apply_page.locator('input[type="file"]').first

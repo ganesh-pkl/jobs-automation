@@ -30,12 +30,18 @@ def _provider(module_name: str):
 
 
 def draft_answer(question: str, profile_data: dict, job_context: str = "") -> str:
+    from .env import setting
+    chosen_provider = setting("AI_PROVIDER", "").strip().lower()
+
+    if chosen_provider == "ollama":
+        return _provider("ollama_llm").draft_answer(question, profile_data, job_context)
+    if chosen_provider in ("groq", "grok"):
+        return _provider("groq_llm").draft_answer(question, profile_data, job_context)
+    if chosen_provider == "gemini":
+        return _provider("gemini").draft_answer(question, profile_data, job_context)
+
     has_gemini = _configured_key("GEMINI_API_KEY")
     has_groq = _configured_key("GROQ_API_KEY")
-    if not has_gemini and not has_groq:
-        raise RuntimeError(
-            "No AI provider is configured. Add GEMINI_API_KEY or GROQ_API_KEY to .env."
-        )
 
     if has_gemini:
         try:
@@ -44,5 +50,26 @@ def draft_answer(question: str, profile_data: dict, job_context: str = "") -> st
             if not (_looks_retryable(exc) and has_groq):
                 raise
             print("  (Gemini unavailable. Falling back to Groq...)")
+
+    if has_groq:
+        try:
+            return _provider("groq_llm").draft_answer(question, profile_data, job_context)
+        except Exception as exc:
+            if not _looks_retryable(exc):
+                raise
+            print(f"  (Groq hit {exc}. Checking Ollama...)")
+
+    # If neither Gemini nor Groq succeeded/configured, check if local Ollama is available
+    try:
+        ollama = _provider("ollama_llm")
+        if ollama.is_available():
+            return ollama.draft_answer(question, profile_data, job_context)
+    except Exception:
+        pass
+
+    if not has_gemini and not has_groq:
+        raise RuntimeError(
+            "No AI provider is configured. Add GEMINI_API_KEY or GROQ_API_KEY to .env, or run a local Ollama server."
+        )
 
     return _provider("groq_llm").draft_answer(question, profile_data, job_context)

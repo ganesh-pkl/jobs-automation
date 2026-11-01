@@ -119,6 +119,26 @@ class DirectAnswerTests(unittest.TestCase):
         self.assertTrue(is_valid_screening_answer("Led a team or project ?*", "3"))
 
 
+    def test_parse_dob_parts(self):
+        self.assertEqual(naukri_apply._parse_dob_parts("10/06/2001"), ("10", "06", "2001"))
+        self.assertEqual(naukri_apply._parse_dob_parts("2001-06-10"), ("10", "06", "2001"))
+        self.assertEqual(naukri_apply._parse_dob_parts("5/9/1999"), ("05", "09", "1999"))
+
+    def test_naukri_auto_decide_options(self):
+        profile = Profile({"relocate_cities": ["Bengaluru"], "years_experience": 3})
+        # Military
+        mil_opts = [{"idx": 0, "label": "Currently serving"}, {"idx": 1, "label": "Previously served"}, {"idx": 2, "label": "Never served"}]
+        self.assertEqual(naukri_apply._auto_decide_option("Have you ever served in the military?", mil_opts, profile)["label"], "Never served")
+        # Layoff
+        layoff_opts = [{"idx": 0, "label": "Yes"}, {"idx": 1, "label": "No"}]
+        self.assertEqual(naukri_apply._auto_decide_option("Have you ever been laid off?", layoff_opts, profile)["label"], "No")
+        # Interview on weekend / Saturday
+        interview_opts = [{"idx": 0, "label": "Yes"}, {"idx": 1, "label": "No"}]
+        self.assertEqual(naukri_apply._auto_decide_option("Available for interview on Saturday?", interview_opts, profile)["label"], "Yes")
+        # Permanent remote
+        remote_opts = [{"idx": 0, "label": "Yes"}, {"idx": 1, "label": "No"}]
+        self.assertEqual(naukri_apply._auto_decide_option("Comfortable working permanent remote?", remote_opts, profile)["label"], "Yes")
+
     def test_fresher_current_ctc_is_skipped(self):
         fresher = Profile({"current_ctc_lpa": 0})
         experienced = Profile({"current_ctc_lpa": 5})
@@ -158,6 +178,18 @@ class ProviderDispatchTests(unittest.TestCase):
             llm.Path, "exists", return_value=False
         ):
             self.assertEqual(llm.draft_answer("question", {}), "fallback")
+
+    def test_ollama_dispatch_when_configured(self):
+        ollama = type(
+            "Ollama", (), {"draft_answer": staticmethod(lambda *_: "ollama_answer")}
+        )
+        with patch.dict(
+            os.environ,
+            {"AI_PROVIDER": "ollama"},
+            clear=True,
+        ), patch("common.llm._provider", return_value=ollama) as load_provider:
+            self.assertEqual(llm.draft_answer("question", {}), "ollama_answer")
+            load_provider.assert_called_once_with("ollama_llm")
 
 
 class ProfilePrivacyTests(unittest.TestCase):
