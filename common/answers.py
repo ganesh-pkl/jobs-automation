@@ -274,7 +274,8 @@ def direct_profile_answer(question: str, answers: dict) -> str | None:
         "kubernetes", "ci/cd", "cicd", "devops", "git", "github actions", "ai", "genai",
         "generative ai", "llm", "rag", "agentic", "ai agents", "langchain", "langgraph",
         "machine learning", "data engineering", "problem solving", "sensors", "systems engineering",
-        "ecommerce", "saas product", "saas",
+        "ecommerce", "saas product", "saas", "kafka", "rabbitmq", "messaging", "message queue",
+        "event driven", "design patterns", "oop", "spring security", "authentication",
     )
 
     # Check if question is a short skill/competence prompt (e.g. "Backend engineering ?", "Python ?")

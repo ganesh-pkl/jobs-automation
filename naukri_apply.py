@@ -382,12 +382,19 @@ def _wait_send_enabled(page, timeout_ms: int = 4000) -> bool:
         enabled = safe_evaluate(page, """
             () => {
                 const root = document.querySelector('.chatbot_Drawer, ._chatBotContainer, [class*="chatbot_Drawer"]') || document;
-                const wrapper = root.querySelector('.sendMsg, [id^="sendMsg__"], .send, [class*="sendMsg"], [class*="save"]');
-                if (!wrapper) return true;
-                const cls = (wrapper.className || '').toLowerCase();
-                const disabledAttr = wrapper.getAttribute('disabled');
-                if (disabledAttr !== null && disabledAttr !== 'false') return false;
-                return !cls.includes('disabled');
+                const sendParent = root.querySelector('.send, .sendMsgbtn_container, [id^="sendMsgbtn_container"]');
+                if (sendParent) {
+                    const cls = (sendParent.className || '').toLowerCase();
+                    if (cls.includes('disabled')) return false;
+                }
+                const btn = root.querySelector('.sendMsg, button, [role="button"]');
+                if (btn) {
+                    const cls = (btn.className || '').toLowerCase();
+                    const disabledAttr = btn.getAttribute('disabled');
+                    if (disabledAttr !== null && disabledAttr !== 'false') return false;
+                    return !cls.includes('disabled');
+                }
+                return true;
             }
         """, default=True)
         if enabled:
@@ -398,20 +405,11 @@ def _wait_send_enabled(page, timeout_ms: int = 4000) -> bool:
 
 
 def _js_click_send(page) -> bool:
-    """Clicks Naukri's screening-chat Save/Send control or dispatches Enter event."""
-    # 1. Attempt Enter key press on the active input if visible
-    try:
-        inp = page.locator('.chatbot_Drawer .textArea, .chatbot_Drawer [contenteditable="true"], [id^="userInput"]:visible, .chatbot_Drawer textarea').last
-        if inp.count() > 0 and inp.is_visible():
-            inp.press("Enter")
-            time.sleep(0.3)
-    except Exception:
-        pass
-
-    # 2. First attempt: Playwright locator with real user pointer events
+    """Clicks Naukri's screening-chat Save/Send control."""
+    # 1. First attempt: Playwright locator with real user pointer events
     try:
         btn = page.locator(
-            '.chatbot_Drawer .sendMsg, .chatbot_Drawer [class*="sendMsg"], [id^="sendMsg"] .sendMsg, .sendMsg:visible, button:has-text("Save"):visible, button:has-text("Send"):visible'
+            '.chatbot_Drawer .send:not(.disabled) .sendMsg, .chatbot_Drawer .sendMsg:visible, [id^="sendMsg"]:visible, button:has-text("Save"):visible, button:has-text("Send"):visible'
         ).last
         if btn.count() > 0 and btn.is_visible():
             btn.scroll_into_view_if_needed()
@@ -421,24 +419,15 @@ def _js_click_send(page) -> bool:
     except Exception:
         pass
 
-    # 3. Second attempt: JavaScript synthetic event dispatch
+    # 2. Second attempt: JavaScript synthetic event dispatch
     return safe_evaluate(page, """
         () => {
             const root = document.querySelector('.chatbot_Drawer, ._chatBotContainer, [class*="chatbot_Drawer"]') || document;
-            
-            // Un-disable send containers if text is present
-            const wrappers = root.querySelectorAll('[id^="sendMsg__"], .send, .sendMsgbtn_container');
-            wrappers.forEach(w => {
-                w.classList.remove('disabled');
-                w.style.pointerEvents = 'auto';
-                w.style.opacity = '1';
-            });
-
-            const btns = Array.from(root.querySelectorAll('.sendMsg, [class*="sendMsg"], [class*="saveMsg"], .chatbot_Send, [class*="sendButton"], [class*="saveButton"], button, div[role="button"], a[role="button"]'));
+            const btns = Array.from(root.querySelectorAll('.sendMsg, [class*="sendMsg"], [class*="saveMsg"], .chatbot_Send, button'));
             const sendBtn = btns.find(b => {
                 const t = (b.innerText || b.getAttribute('aria-label') || '').trim().toLowerCase();
                 const cls = (b.className || '').toLowerCase();
-                return t === 'save' || t === 'send' || t === 'submit' || t === 'next' || t === 'apply' ||
+                return t === 'save' || t === 'send' || t === 'submit' || t === 'next' ||
                        cls.includes('send') || cls.includes('save') || cls.includes('submit');
             });
             if (sendBtn) {
@@ -446,12 +435,6 @@ def _js_click_send(page) -> bool:
                 sendBtn.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, view: window}));
                 sendBtn.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, view: window}));
                 sendBtn.click();
-                return true;
-            }
-            const ed = root.querySelector('[id^="userInput"], .textArea, input[placeholder*="message" i], input[placeholder*="type" i], input[type="text"], textarea, [contenteditable="true"]');
-            if (ed) {
-                ed.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true}));
-                ed.dispatchEvent(new KeyboardEvent('keyup', {key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true}));
                 return true;
             }
             return false;
@@ -560,6 +543,17 @@ def verify_applied(page) -> bool:
     """Best-effort check that the application actually went through."""
     for _ in range(5):  # Poll over ~3-4 seconds for UI confirmation
         time.sleep(0.6)
+        rejected = safe_evaluate(page, """
+            () => {
+                const bodyText = (document.body.innerText || '').toLowerCase();
+                return bodyText.includes('application was not accepted') ||
+                       bodyText.includes('incomplete information') ||
+                       bodyText.includes('mandatory questions when reapplying');
+            }
+        """, default=False)
+        if rejected:
+            return False
+
         is_done = safe_evaluate(page, """
             () => {
                 const bodyText = (document.body.innerText || '').toLowerCase();
@@ -1064,26 +1058,23 @@ def _read_filled_text(page) -> str:
 def _fill_freetext(page, text: str):
     """Fills answer in Naukri screening drawer (contenteditable div or input/textarea)."""
     text_str = str(text).strip()
-    # 1. First attempt: Playwright native locator + fill / keyboard typing
+    # 1. First attempt: Playwright native locator + native keyboard typing so React updates
     try:
         inp = page.locator(
             '.chatbot_Drawer .textArea, .chatbot_Drawer [contenteditable="true"], [id^="userInput"]:visible, .textArea:visible'
         ).last
         if inp.count() > 0 and inp.is_visible():
             inp.scroll_into_view_if_needed()
-            try:
-                inp.fill(text_str, timeout=2000)
-                time.sleep(0.2)
-            except Exception:
-                inp.click(force=True)
-                time.sleep(0.1)
-                page.keyboard.press("Control+A")
-                page.keyboard.press("Backspace")
-                page.keyboard.press("Meta+A")
-                page.keyboard.press("Backspace")
-                time.sleep(0.05)
-                page.keyboard.type(text_str, delay=15)
-                time.sleep(0.2)
+            inp.click(force=True)
+            time.sleep(0.15)
+            page.keyboard.press("Meta+A")
+            page.keyboard.press("Backspace")
+            page.keyboard.press("Control+A")
+            page.keyboard.press("Backspace")
+            time.sleep(0.1)
+            page.keyboard.type(text_str, delay=15)
+            time.sleep(0.3)
+            return
     except Exception:
         pass
 
@@ -1112,14 +1103,6 @@ def _fill_freetext(page, text: str):
                     ed.dispatchEvent(new Event('blur', {bubbles: true}));
                 }
             }
-
-            // Un-disable save/send wrapper
-            const sendWraps = root.querySelectorAll('.send, [id^="sendMsg__"], .sendMsgbtn_container');
-            sendWraps.forEach(w => {
-                w.classList.remove('disabled');
-                w.style.pointerEvents = 'auto';
-                w.style.opacity = '1';
-            });
         }
     """, arg=text_str)
 

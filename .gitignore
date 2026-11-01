@@ -14,6 +14,7 @@ screenshots/
 *.doc
 *.docx
 resumes/
+personal/
 
 # Python and local environments
 __pycache__/

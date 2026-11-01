@@ -45,6 +45,57 @@ Designed to run **once every morning** as an autonomous daily workflow with pers
 
 ---
 
+## Repository Structure
+
+```text
+jobs-automation/
+├── naukri.py                     # Main CLI entry point (init, doctor, preview, apply, stats)
+├── daily_pipeline.py             # Orchestrates the autonomous morning multi-platform run
+├── run_all.py                    # Unified runner across all supported job portals
+├── login_capture.py              # Interactive session capture tool for saving session JSONs
+│
+├── *_apply.py                    # Direct automation engines for individual platforms:
+│   ├── naukri_apply.py           # Naukri automation + chatbot drawer engine
+│   ├── hirist_apply.py           # Hirist automation + questionnaire multi-step engine
+│   ├── linkedin_apply.py         # LinkedIn Easy Apply engine
+│   ├── foundit_apply.py          # Foundit (Monster) automation engine
+│   ├── glassdoor_apply.py        # Glassdoor + Indeed SmartApply engine
+│   ├── apna_apply.py             # Apna automation engine
+│   ├── wellfound_apply.py        # Wellfound (AngelList) automation engine
+│   ├── instahyre_apply.py        # Instahyre automation engine
+│   └── uplers_apply.py           # Uplers automation engine
+│
+├── common/                       # Shared modules and AI intelligence
+│   ├── answers.py                # Core question routing, typed profile facts & screening answers
+│   ├── llm.py                    # Multi-provider LLM dispatcher (Groq, Ollama, Gemini)
+│   ├── groq_llm.py               # Ultra-fast screening answer generation via Groq Cloud
+│   ├── ollama_llm.py             # Completely local & private LLM screening generation
+│   ├── gemini.py                 # Gemini provider fallback
+│   ├── profile.py                # Profile loader and validator (profile.yaml)
+│   ├── learned_answers.py        # Local question-answer memory repository
+│   ├── resume_selector.py        # Targeted resume matcher & dynamic ATS generator
+│   ├── resume_generator.py       # On-the-fly tailored LaTeX/PDF resume generator
+│   ├── recruiter_connect.py      # Automated recruiter networking & personalized outreach
+│   ├── external_tracker.py       # Aggregator for external ATS/careers openings
+│   ├── stats_tracker.py          # Session statistics tracker
+│   └── stealth.py                # Anti-bot detection mitigation & human-like curves
+│
+├── resumes/                      # Role-targeted master PDF & LaTeX resumes
+│   └── generated/                # Job-tailored resumes generated dynamically on-the-fly
+│
+├── personal/                     # Personal portfolio, video scripts & private documentation (gitignored)
+│   ├── cognitivo_docs/           # Private project documentation & billing notes
+│   ├── tex_resumes/              # Private LaTeX resume templates
+│   ├── video_scripts/            # Product video & engineering walkthrough scripts
+│   └── ai_engineer_video_scripts/# AI engineering educational video scripts
+│
+├── tests/                        # Comprehensive test suite (112 unit tests)
+├── docs/                         # Guides, user manual, and video scripts
+└── scripts/                      # Release packaging and PDF guide builders
+```
+
+---
+
 ## Setup & Prerequisites
 
 ### 1. Installation

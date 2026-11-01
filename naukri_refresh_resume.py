@@ -110,11 +110,15 @@ def run():
     if not resume_path.is_absolute():
         resume_path = Path(__file__).resolve().parent / resume_filename
     if not resume_path.exists():
-        raise SystemExit(
-            f"Resume file not found at {resume_path}. "
-            f"Put your resume in this project folder with the exact filename "
-            f"set in profile.yaml's resume_file_name."
-        )
+        in_resumes = Path(__file__).resolve().parent / "resumes" / resume_filename
+        if in_resumes.exists():
+            resume_path = in_resumes
+        else:
+            raise SystemExit(
+                f"Resume file not found at {resume_path} or in resumes/ folder. "
+                f"Put your resume in the project or resumes/ folder with the exact filename "
+                f"set in profile.yaml's resume_file_name."
+            )
 
     with sync_playwright() as p:
         browser_mode = profile.data.get("browser_mode", "minimized")
