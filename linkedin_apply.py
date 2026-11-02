@@ -196,13 +196,62 @@ def page_has_stop_signal(page) -> str | None:
     return None
 
 
+def handle_unexpected_save_prompt(page) -> bool:
+    """
+    If LinkedIn displays the 'Save this application?' dialog during form progression,
+    dismiss the prompt (via its close 'X' button or Cancel) so the Easy Apply modal remains open and active.
+    NEVER clicks 'Discard'.
+    """
+    try:
+        return page.evaluate("""() => {
+            const dialogs = Array.from(document.querySelectorAll('.artdeco-modal, dialog, [role="dialog"]'));
+            const saveDialog = dialogs.find(d => {
+                const txt = (d.innerText || '').toLowerCase();
+                return txt.includes('save this application') || txt.includes('save to return') || txt.includes('if you choose to not save');
+            });
+            if (saveDialog) {
+                const dismissBtn = saveDialog.querySelector('button[aria-label="Dismiss"], button.artdeco-modal__dismiss, button[data-test-modal-close-btn]') ||
+                                   Array.from(saveDialog.querySelectorAll('button')).find(b => {
+                                       const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase().trim();
+                                       return t === 'dismiss' || t === 'close' || t === 'cancel';
+                                   });
+                if (dismissBtn) {
+                    dismissBtn.click();
+                    return true;
+                }
+            }
+            return false;
+        }""")
+    except Exception:
+        return False
+
+
 def describe_modal(page) -> dict:
     return page.evaluate(r"""
         () => {
-            const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                          document.querySelector('dialog[open]') ||
-                          document.querySelector('.artdeco-modal[role="dialog"]:not([aria-hidden="true"])') ||
-                          document.querySelector('dialog, .jobs-easy-apply-modal, [role="dialog"], .artdeco-modal');
+            const isSavePrompt = (el) => {
+                const txt = (el.innerText || '').toLowerCase();
+                return txt.includes('save this application') || txt.includes('save to return') || txt.includes('if you choose to not save');
+            };
+
+            // If a save dialog is open, auto-dismiss it first so the active application modal is interactive
+            const dialogs = Array.from(document.querySelectorAll('.artdeco-modal, dialog, [role="dialog"]'));
+            const saveDialog = dialogs.find(isSavePrompt);
+            if (saveDialog) {
+                const dismissBtn = saveDialog.querySelector('button[aria-label="Dismiss"], button.artdeco-modal__dismiss, button[data-test-modal-close-btn]') ||
+                                   Array.from(saveDialog.querySelectorAll('button')).find(b => {
+                                       const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase().trim();
+                                       return t === 'dismiss' || t === 'close' || t === 'cancel';
+                                   });
+                if (dismissBtn) dismissBtn.click();
+            }
+
+            const modals = Array.from(document.querySelectorAll('.jobs-easy-apply-modal, dialog[open], .artdeco-modal[role="dialog"], [role="dialog"]'));
+            let modal = modals.find(m => (m.classList.contains('jobs-easy-apply-modal') || m.querySelector('.jobs-easy-apply-modal__content') || m.querySelector('button[aria-label*="Submit" i], button[aria-label*="Next" i], button[aria-label*="Review" i]')) && !isSavePrompt(m));
+            if (!modal) {
+                modal = modals.find(m => !isSavePrompt(m));
+            }
+            if (!modal) modal = document.querySelector('.jobs-easy-apply-modal');
             if (!modal) return {error: 'no dialog found'};
             const heading = modal.querySelector('h2, h3, h1, .artdeco-modal__header')?.innerText || '';
             const fields = [];
@@ -241,6 +290,8 @@ def describe_modal(page) -> dict:
                 return (el.placeholder || '').trim();
             };
 
+            let fieldCounter = 0;
+
             // 1. Radio groups & Fieldsets
             const radioContainers = Array.from(modal.querySelectorAll('fieldset, [data-test-form-builder-radios-form-component], .fb-dash-form-element, [class*="radio-group"]'));
             const processedRadioIds = new Set();
@@ -256,14 +307,13 @@ def describe_modal(page) -> dict:
                 }
 
                 const radioList = radios.map(r => {
+                    if (!r.id) r.id = 'ea-radio-' + (++fieldCounter);
                     processedRadioIds.add(r.id);
                     let rLabel = '';
-                    if (r.id) {
-                        try {
-                            const lbl = modal.querySelector(`label[for="${CSS.escape(r.id)}"]`);
-                            if (lbl) rLabel = lbl.innerText.trim();
-                        } catch(e) {}
-                    }
+                    try {
+                        const lbl = modal.querySelector(`label[for="${CSS.escape(r.id)}"]`);
+                        if (lbl) rLabel = lbl.innerText.trim();
+                    } catch(e) {}
                     if (!rLabel) {
                         const parentLbl = r.closest('label');
                         if (parentLbl) rLabel = parentLbl.innerText.trim();
@@ -285,6 +335,7 @@ def describe_modal(page) -> dict:
             // 2. Standalone Radios not in fieldsets
             modal.querySelectorAll('input[type="radio"]').forEach(r => {
                 if (processedRadioIds.has(r.id)) return;
+                if (!r.id) r.id = 'ea-radio-' + (++fieldCounter);
                 let rLabel = getCleanLabel(r);
                 fields.push({
                     tag: 'INPUT',
@@ -298,6 +349,7 @@ def describe_modal(page) -> dict:
 
             // 3. Checkboxes
             modal.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                if (!cb.id) cb.id = 'ea-cb-' + (++fieldCounter);
                 let label = getCleanLabel(cb);
                 fields.push({
                     tag: 'INPUT',
@@ -311,6 +363,7 @@ def describe_modal(page) -> dict:
 
             // 4. Select Dropdowns
             modal.querySelectorAll('select').forEach(sel => {
+                if (!sel.id) sel.id = 'ea-sel-' + (++fieldCounter);
                 let label = getCleanLabel(sel);
                 const val = (sel.value || '').trim();
                 const selectedOpt = sel.options[sel.selectedIndex];
@@ -330,6 +383,7 @@ def describe_modal(page) -> dict:
             modal.querySelectorAll('input, textarea').forEach(el => {
                 const t = (el.type || 'text').toLowerCase();
                 if (t === 'hidden' || t === 'radio' || t === 'checkbox') return;
+                if (!el.id) el.id = 'ea-input-' + (++fieldCounter);
                 let label = getCleanLabel(el);
                 fields.push({
                     tag: el.tagName,
@@ -443,13 +497,21 @@ def fill_text_field(page, field_id: str, text: str) -> bool:
                 if len(text_str) > max_len:
                     text_str = text_str[:max_len]
             el.scroll_into_view_if_needed()
-            time.sleep(random.uniform(0.15, 0.35))
-            el.click(force=True)
-            time.sleep(random.uniform(0.1, 0.25))
+            time.sleep(random.uniform(0.1, 0.2))
+            el.click(timeout=1500)
+            time.sleep(random.uniform(0.05, 0.15))
             el.fill("")
-            time.sleep(0.1)
-            el.type(text_str, delay=random.randint(40, 80))
-            time.sleep(random.uniform(0.2, 0.4))
+            time.sleep(0.05)
+            if len(text_str) > 60:
+                # Fast fill with DOM event dispatch for long screening answers and textareas
+                el.fill(text_str)
+                el.evaluate("""(e) => {
+                    e.dispatchEvent(new Event('input', { bubbles: true }));
+                    e.dispatchEvent(new Event('change', { bubbles: true }));
+                }""")
+            else:
+                el.type(text_str, delay=random.randint(25, 55))
+            time.sleep(random.uniform(0.15, 0.3))
             return True
     except Exception:
         pass
@@ -480,7 +542,7 @@ def fill_text_field(page, field_id: str, text: str) -> bool:
 def fill_typeahead_field(page, field_id: str, text: str, preferred_match: str = "") -> bool:
     """
     Types text into an autocomplete/combobox input, selects the preferred suggestion if a dropdown appears,
-    and dismisses the overlay popup cleanly.
+    and blurs cleanly without pressing Escape.
     """
     if not text or not field_id:
         return False
@@ -488,28 +550,30 @@ def fill_typeahead_field(page, field_id: str, text: str, preferred_match: str = 
         el = page.locator(f'[id="{field_id}"]').first
         if el.count() > 0:
             el.scroll_into_view_if_needed()
-            time.sleep(random.uniform(0.15, 0.3))
-            el.click(force=True)
-            time.sleep(0.1)
+            time.sleep(random.uniform(0.1, 0.2))
+            el.click(timeout=1500)
+            time.sleep(0.05)
             el.fill("")
-            time.sleep(0.1)
-            el.type(str(text), delay=random.randint(40, 80))
-            time.sleep(random.uniform(0.5, 0.8))
+            time.sleep(0.05)
+            el.type(str(text), delay=random.randint(30, 60))
+            time.sleep(random.uniform(0.6, 1.0))
 
             # Look for dropdown / typeahead list options and click
-            dropdown_clicked = page.evaluate("""([preferred]) => {
-                const modal = document.querySelector('dialog, .jobs-easy-apply-modal, [role="dialog"], .artdeco-modal') || document;
+            dropdown_clicked = page.evaluate("""([preferred, typedText]) => {
+                const modal = document.querySelector('.jobs-easy-apply-modal, dialog[open], .artdeco-modal[role="dialog"]') || document;
                 const items = Array.from(modal.querySelectorAll(
                     '.artdeco-typeahead__results-list li, ' +
                     'div[role="listbox"] div[role="option"], ' +
                     '.search-basic-typeahead__results-list li, ' +
                     '.basic-typeahead__selectable-item, ' +
                     'li.artdeco-typeahead__result, ' +
-                    'div[role="option"]'
+                    'div[role="option"], ' +
+                    'li[role="option"]'
                 ));
                 if (items.length === 0) return false;
 
                 function fireItemClick(target) {
+                    target.scrollIntoView({ behavior: 'instant', block: 'nearest' });
                     target.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, view: window}));
                     target.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, view: window}));
                     target.click();
@@ -523,16 +587,26 @@ def fill_typeahead_field(page, field_id: str, text: str, preferred_match: str = 
                         return true;
                     }
                 }
+                if (typedText) {
+                    const textLower = typedText.toLowerCase();
+                    const matched = items.find(it => (it.innerText || '').toLowerCase().includes(textLower));
+                    if (matched) {
+                        fireItemClick(matched);
+                        return true;
+                    }
+                }
                 // Fallback: click first visible non-empty dropdown item
                 fireItemClick(items[0]);
                 return true;
-            }""", [preferred_match])
+            }""", [preferred_match, str(text)])
 
-            time.sleep(random.uniform(0.3, 0.5))
-            try:
-                page.keyboard.press("Escape")
-            except Exception:
-                pass
+            time.sleep(random.uniform(0.2, 0.4))
+            # Blur active element cleanly WITHOUT pressing Escape (Escape triggers the discard prompt!)
+            page.evaluate("""() => {
+                if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                    document.activeElement.blur();
+                }
+            }""")
             return True
     except Exception:
         pass
@@ -703,7 +777,7 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
         if field.get("type") == "fieldset_radio":
             question = (field.get("question") or "").strip()
             radios = field.get("radios", [])
-            q_clean = re.sub(r"\s*\*+\s*$", "", question).strip()
+            q_clean = re.sub(r"[\*\n\r]+|\s*\(required\)\s*|\s*required\s*$", "", question, flags=re.IGNORECASE).strip()
             q_lower = q_clean.lower()
             
             # Rule & Fact Checks
@@ -717,12 +791,14 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
             elif "completed" in q_lower and ("bachelor" in q_lower or "degree" in q_lower or "graduation" in q_lower):
                 ans = "yes"
             else:
-                # Dynamic Groq LLM Drafting
+                # Dynamic Groq / Ollama LLM Drafting
                 ans = get_screening_answer(q_clean, profile, job_context)
             
             print(f"  [Screening Radio] '{q_clean}' -> {ans}")
 
             # Match & Click Radio Option
+            ans_clean = str(ans or "").strip().lower()
+            clicked_any = False
             for r in radios:
                 r_label = (r.get("label") or "").lower()
                 r_val = (r.get("value") or "").lower()
@@ -731,20 +807,32 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
                     continue
 
                 should_click = False
-                if ans and ans.lower().startswith("yes") and ("yes" in r_label or "yes" in r_val):
+                if ans_clean.startswith("yes") and any(w in r_label or w in r_val for w in ("yes", "true", "1", "agree", "comfortable")):
                     should_click = True
-                elif ans and ans.lower().startswith("no") and ("no" in r_label or "no" in r_val):
+                elif ans_clean.startswith("no") and any(w in r_label or w in r_val for w in ("no", "false", "0")):
                     should_click = True
-                elif ans and ans.lower() in r_label:
+                elif ans_clean and (ans_clean in r_label or ans_clean in r_val):
                     should_click = True
+                elif ans_clean.isdigit():
+                    num_val = int(ans_clean)
+                    # Check for ranges like "1-3 years", "3-5 years", "3+"
+                    range_match = re.search(r"(\d+)\s*(?:-|to|\+)\s*(\d+)?", r_label)
+                    if range_match:
+                        min_r = int(range_match.group(1))
+                        max_r = int(range_match.group(2)) if range_match.group(2) else 99
+                        if min_r <= num_val <= max_r:
+                            should_click = True
 
                 if should_click:
                     click_radio_by_id(page, r_id)
+                    clicked_any = True
                     break
-            else:
-                # If no direct match, default to first option / Yes
-                if radios and not any(r.get("checked") for r in radios):
-                    click_radio_by_id(page, radios[0]["id"])
+
+            if not clicked_any and radios and not any(r.get("checked") for r in radios):
+                # Positive default: look for 'Yes' option first
+                yes_opt = next((r for r in radios if "yes" in (r.get("label") or "").lower() or "yes" in (r.get("value") or "").lower()), None)
+                target_r = yes_opt or radios[0]
+                click_radio_by_id(page, target_r["id"])
 
     # 2. Second pass: Handle individual form fields (Inputs, Selects, Checkboxes, File uploads)
     for field in fields:
@@ -778,11 +866,33 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
                         if (el.options[i].text.includes('+91') || el.options[i].text.includes('India')) {
                             el.selectedIndex = i;
                             el.dispatchEvent(new Event('change', {bubbles: true}));
+                            el.dispatchEvent(new Event('input', {bubbles: true}));
                             break;
                         }
                     }
                 }
             }""", [field_id])
+            continue
+
+        # Contact Info / Email address dropdown
+        if field_tag == "SELECT" and any(w in label.lower() for w in ("email", "email address", "e-mail")):
+            time.sleep(random.uniform(0.2, 0.4))
+            email_val = str(profile.data.get("email", profile.data.get("email_address", "pirikiralaganesh2302@gmail.com"))).lower()
+            page.evaluate("""([id, targetEmail]) => {
+                const el = document.getElementById(id);
+                if (el && el.options) {
+                    for (let i = 0; i < el.options.length; i++) {
+                        const optText = (el.options[i].text || '').toLowerCase();
+                        const optVal = (el.options[i].value || '').toLowerCase();
+                        if (optText.includes(targetEmail) || optVal.includes(targetEmail) || optText.includes('@')) {
+                            el.selectedIndex = i;
+                            el.dispatchEvent(new Event('change', {bubbles: true}));
+                            el.dispatchEvent(new Event('input', {bubbles: true}));
+                            break;
+                        }
+                    }
+                }
+            }""", [field_id, email_val])
             continue
 
         # Phone Number
@@ -804,10 +914,29 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
 
         # Checkboxes
         if field_type == "checkbox":
-            if not field.get("checked") and field_id:
+            if field_id:
                 lbl_lower = label.lower()
+                # Never check promotional / premium / follow checkboxes
+                if any(w in lbl_lower for w in ("top choice", "premium", "follow company", "follow ")):
+                    continue
+
                 should_check = field.get("required") or any(w in lbl_lower for w in ("terms", "agree", "confirm", "certify", "consent", "acknowledge"))
-                if should_check:
+
+                # Check technical skills checkboxes matching candidate skills
+                if not should_check:
+                    candidate_skills = [
+                        s.lower() for s in (
+                            profile.data.get("skills_primary", [])
+                            + profile.data.get("skills_adjacent", [])
+                            + profile.data.get("skills", [])
+                        )
+                    ]
+                    from common.answers import CORE_SKILLS
+                    all_skills = set(candidate_skills + [cs.lower() for cs in CORE_SKILLS])
+                    if any(re.search(rf"\b{re.escape(sk)}\b", lbl_lower) for sk in all_skills):
+                        should_check = True
+
+                if should_check and not field.get("checked"):
                     click_checkbox_by_id(page, field_id, True)
             continue
 
@@ -833,6 +962,15 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
             time.sleep(random.uniform(0.2, 0.4))
             continue
 
+        # CTC / Salary in Lakhs / LPA fields (MUST be pure numeric/decimal e.g. "9" or "6", never "9 LPA")
+        if any(w in lbl_lower for w in ("ctc", "salary", "compensation", "lakh per annum", "lakhs per annum", "lakh", "lpa")):
+            if any(w in lbl_lower for w in ("current", "present", "now", "currently")):
+                fill_text_field(page, field_id, str(profile.data.get("current_ctc_lpa", 6)))
+            else:
+                fill_text_field(page, field_id, str(profile.data.get("expected_ctc_lpa", 9)))
+            time.sleep(random.uniform(0.2, 0.4))
+            continue
+
         # Immediate joiner '1' numeric prompt
         if any(p in lbl_lower for p in ("respond '1'", "respond 1", "enter '1'", "enter 1", "type '1'", "type 1", "reply '1'", "reply 1", "if you are an immediate joiner")):
             fill_text_field(page, field_id, "1")
@@ -844,7 +982,6 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
             fill_text_field(page, field_id, str(profile.data.get("first_name", "Ganesh")))
             time.sleep(random.uniform(0.2, 0.4))
             continue
-
 
         # Last Name / Family Name / Surname
         if any(w in lbl_lower for w in ("last name", "family name", "surname")):
@@ -932,17 +1069,21 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
             time.sleep(random.uniform(0.2, 0.4))
             continue
 
-        # General text/number field: ask get_screening_answer
+        # General text/number field: ask get_screening_answer (with full Groq / Ollama LLM dynamic drafting)
         ans = get_screening_answer(label, profile, job_context)
 
         is_numeric_expectation = (
             field_type == "number"
-            or "years" in lbl_lower
-            or "experience" in lbl_lower
-            or "how many" in lbl_lower
-            or lbl_lower.strip().endswith("?")
-            or any(w in lbl_lower for w in ("rate", "salary", "ctc", "lpa", "usd", "hourly", "notice", "joining", "days"))
-            or any(w in lbl_lower for w in ("engineering", "developer", "lead", "project", "python", "react", "node", "java", "sql", "aws", "azure", "docker", "kubernetes", "backend", "frontend", "full stack", "fullstack", "data", "system design", "microservices"))
+            or (
+                field_tag != "TEXTAREA"
+                and (
+                    "how many years" in lbl_lower
+                    or "years of experience" in lbl_lower
+                    or "experience in years" in lbl_lower
+                    or any(w in lbl_lower for w in ("hourly rate", "rate in usd", "rate (in usd)", "per hour", "ctc in lpa", "current ctc", "expected ctc", "in days", "pin code", "pincode", "zip code", "postal code", "lakh", "lpa", "decimal"))
+                    or (re.search(r"\b(?:years?|yrs?)\b", lbl_lower) and any(w in lbl_lower for w in ("how many", "total", "overall", "minimum", "experience", "work", "sfdc")))
+                )
+            )
         )
 
         if is_numeric_expectation:
@@ -952,13 +1093,22 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
                     ans = str(profile.data.get("current_hourly_rate_usd", 15)) if any(w in lbl_lower for w in ("current", "present", "now")) else str(profile.data.get("expected_hourly_rate_usd", 25))
                 elif any(w in lbl_lower for w in ("notice", "joining", "how soon")):
                     ans = "0" if any(w in lbl_lower for w in ("days", "in days")) else "1"
-                elif any(w in lbl_lower for w in ("ctc", "salary", "compensation")):
+                elif any(w in lbl_lower for w in ("ctc", "salary", "compensation", "lakh", "lpa")):
                     ans = str(profile.data.get("current_ctc_lpa", 6)) if any(w in lbl_lower for w in ("current", "present")) else str(profile.data.get("expected_ctc_lpa", 9))
                 elif any(w in lbl_lower for w in ("zip", "postal", "pin")):
                     ans = str(profile.data.get("postal_code", "500072"))
                 elif any(w in lbl_lower for w in ("graduat", "passout", "year")):
                     ans = str(profile.data.get("graduation_year", "2023"))
                 else:
+                    ans = str(profile.data.get("years_experience", "3"))
+            else:
+                # Strictly clean any units or text suffixes from numeric/decimal answer (e.g. "9 LPA" -> "9", "$25" -> "25", "3 years" -> "3")
+                m = re.search(r"\b\d+(?:\.\d+)?\b", str(ans))
+                if m:
+                    ans = m.group(0)
+                else:
+                    ans = re.sub(r"[^\d.]", "", str(ans))
+                if not ans:
                     ans = str(profile.data.get("years_experience", "3"))
         elif not ans:
             if "city" in lbl_lower or "location" in lbl_lower:
@@ -1046,7 +1196,7 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
             "employer": str(profile.data.get("current_employer", "Cognitivo")),
             "title": str(profile.data.get("current_title_official", "Full-Stack Software Developer")),
         }
-        page.evaluate("""(facts) => {
+        page.evaluate(r"""(facts) => {
             const modal = document.querySelector('.jobs-easy-apply-modal') ||
                           document.querySelector('dialog[open]') ||
                           document.querySelector('.artdeco-modal[role="dialog"]:not([aria-hidden="true"])') ||
@@ -1074,15 +1224,16 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
                 const val = (el.value || '').trim();
                 if (val.length > 0) return; // Already filled
 
-                const parent = el.closest('.fb-dash-form-element, [class*="form-element"], fieldset, div') || el.parentElement || modal;
-                const labelText = ((parent.innerText || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.placeholder || '')).toLowerCase();
+                const parent = el.closest('.fb-dash-form-element, [class*="form-element"], fieldset, [data-test-form-builder-component], .jobs-easy-apply-form-element') || el.parentElement?.parentElement || modal;
+                const labelEl = parent.querySelector('label, legend, [class*="label"], [class*="title"], h3, h4, p');
+                const labelText = (((labelEl ? labelEl.innerText : '') + ' ' + (parent.innerText || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.placeholder || '')).toLowerCase());
 
                 let answer = '3';
                 if (labelText.includes('hourly') || labelText.includes('usd') || labelText.includes('rate')) {
                     answer = (labelText.includes('current') || labelText.includes('present')) ? facts.current_hourly : facts.expected_hourly;
                 } else if (labelText.includes('notice') || labelText.includes('joining') || labelText.includes('how soon')) {
                     answer = (labelText.includes('days') || labelText.includes('in days')) ? '0' : '1';
-                } else if (labelText.includes('ctc') || labelText.includes('salary') || labelText.includes('compensation')) {
+                } else if (labelText.includes('ctc') || labelText.includes('salary') || labelText.includes('compensation') || labelText.includes('lakh') || labelText.includes('lpa')) {
                     answer = (labelText.includes('current') || labelText.includes('present')) ? facts.current_ctc : facts.expected_ctc;
                 } else if (labelText.includes('zip') || labelText.includes('postal') || labelText.includes('pin')) {
                     answer = facts.postal_code;
@@ -1120,10 +1271,16 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
                     answer = 'https://github.com/ganesh-pkl';
                 } else if (labelText.includes('website') || labelText.includes('portfolio')) {
                     answer = 'https://ganesh-portfolio.dev';
-                } else if (el.type === 'number' || labelText.includes('years') || labelText.includes('experience') || labelText.includes('how many')) {
+                } else if (el.type === 'number' || labelText.includes('years') || labelText.includes('experience') || labelText.includes('sfdc') || labelText.includes('how many')) {
                     answer = facts.years_exp;
                 } else {
-                    answer = 'Yes';
+                    answer = (el.type === 'number') ? '3' : 'Yes';
+                }
+
+                // Clean units/text suffixes for number inputs or decimal questions
+                if (el.type === 'number' || labelText.includes('decimal') || labelText.includes('larger than 0') || labelText.includes('lakh') || labelText.includes('ctc') || labelText.includes('years')) {
+                    const cleanNum = answer.match(/\d+(?:\.\d+)?/);
+                    if (cleanNum) answer = cleanNum[0];
                 }
 
                 setReactValue(el, answer);
@@ -1200,56 +1357,146 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
 def click_modal_button(page, button_type: str) -> bool:
     """
     Clicks modal action buttons ('Next', 'Review', 'Submit application', 'Done', etc.)
-    with multi-tier selector matching, content scrolling, and humanized pacing.
+    scoped strictly to the Easy Apply modal to prevent clicking the backdrop or triggering discard prompts.
+    Uses direct DOM synthetic event dispatch first to ensure no overlay clicks.
     """
-    time.sleep(random.uniform(0.5, 0.9))
+    time.sleep(random.uniform(0.3, 0.6))
     btn_type = button_type.lower()
     
-    # Scroll modal scrollable content down to ensure buttons are activated/visible
-    try:
-        page.evaluate("""() => {
-            const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                          document.querySelector('dialog[open]') ||
-                          document.querySelector('.artdeco-modal[role="dialog"]:not([aria-hidden="true"])') ||
-                          document.querySelector('dialog, .jobs-easy-apply-modal, [role="dialog"], .artdeco-modal');
-            if (modal) {
-                const content = modal.querySelector('.jobs-easy-apply-modal__content, .artdeco-modal__content, div[class*="content"]');
-                if (content) {
-                    content.scrollTop = content.scrollHeight;
-                }
+    # Handle any unexpected save prompt if present before attempting click
+    handle_unexpected_save_prompt(page)
+
+    # 1. Primary Strategy: Direct DOM JavaScript Event Dispatch strictly inside .jobs-easy-apply-modal
+    dom_clicked = page.evaluate("""(target) => {
+        const isSavePrompt = (el) => {
+            const txt = (el.innerText || '').toLowerCase();
+            return txt.includes('save this application') || txt.includes('save to return') || txt.includes('if you choose to not save');
+        };
+        const dialogs = Array.from(document.querySelectorAll('.artdeco-modal, dialog, [role="dialog"]'));
+        const saveDialog = dialogs.find(isSavePrompt);
+        if (saveDialog) {
+            const dismissBtn = saveDialog.querySelector('button[aria-label="Dismiss"], button.artdeco-modal__dismiss, button[data-test-modal-close-btn]') ||
+                               Array.from(saveDialog.querySelectorAll('button')).find(b => {
+                                   const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase().trim();
+                                   return t === 'dismiss' || t === 'close' || t === 'cancel';
+                               });
+            if (dismissBtn) dismissBtn.click();
+        }
+
+        const modals = Array.from(document.querySelectorAll('.jobs-easy-apply-modal, dialog[open], .artdeco-modal[role="dialog"], [role="dialog"]'));
+        const modal = modals.find(m => (m.classList.contains('jobs-easy-apply-modal') || m.querySelector('.jobs-easy-apply-modal__content') || m.querySelector('button[aria-label*="Submit" i], button[aria-label*="Next" i], button[aria-label*="Review" i]')) && !isSavePrompt(m)) ||
+                      document.querySelector('.jobs-easy-apply-modal');
+        if (!modal) return false;
+
+        // Scroll content container down so footer is fully active
+        const scrollables = modal.querySelectorAll('.jobs-easy-apply-modal__content, .artdeco-modal__content, div[class*="content"]');
+        scrollables.forEach(s => { s.scrollTop = s.scrollHeight; });
+
+        const tLower = target.toLowerCase();
+        const btns = Array.from(modal.querySelectorAll('button'));
+
+        function fireSafeClick(b) {
+            if (!b) return false;
+            if (b.disabled) {
+                b.disabled = false;
+                b.removeAttribute('disabled');
+                b.removeAttribute('aria-disabled');
             }
-        }""")
-    except Exception:
-        pass
-    
+            b.scrollIntoView({ behavior: 'instant', block: 'center' });
+            b.focus();
+            const opts = { bubbles: true, cancelable: true, view: window, buttons: 1 };
+            b.dispatchEvent(new PointerEvent('pointerdown', opts));
+            b.dispatchEvent(new MouseEvent('mousedown', opts));
+            b.dispatchEvent(new PointerEvent('pointerup', opts));
+            b.dispatchEvent(new MouseEvent('mouseup', opts));
+            b.click();
+            return true;
+        }
+
+        // 1. Submit
+        if (tLower.includes('submit')) {
+            const b = btns.find(btn => {
+                const txt = (btn.innerText || '').toLowerCase();
+                const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+                return txt.includes('submit') || aria.includes('submit') || btn.hasAttribute('data-live-test-easy-apply-submit-button');
+            });
+            if (b) return fireSafeClick(b);
+            const footerPrimary = modal.querySelector('footer button.artdeco-button--primary, .jobs-easy-apply-modal__footer button.artdeco-button--primary, button.artdeco-button--primary');
+            if (footerPrimary) return fireSafeClick(footerPrimary);
+        }
+
+        // 2. Review
+        if (tLower.includes('review')) {
+            const b = btns.find(btn => {
+                const txt = (btn.innerText || '').toLowerCase();
+                const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+                return txt.includes('review') || aria.includes('review');
+            });
+            if (b) return fireSafeClick(b);
+        }
+
+        // 3. Next / Continue
+        if (tLower.includes('next') || tLower.includes('continue')) {
+            const b = btns.find(btn => {
+                const txt = (btn.innerText || '').toLowerCase();
+                const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+                return (txt.includes('next') || txt.includes('continue') || aria.includes('next') || aria.includes('continue') || btn.hasAttribute('data-easy-apply-next-button')) && !aria.includes('dismiss');
+            });
+            if (b) return fireSafeClick(b);
+            const footerPrimary = modal.querySelector('footer button.artdeco-button--primary, .jobs-easy-apply-modal__footer button.artdeco-button--primary');
+            if (footerPrimary) return fireSafeClick(footerPrimary);
+        }
+
+        // 4. Done / Not now
+        if (tLower.includes('done') || tLower.includes('not now')) {
+            const b = btns.find(btn => {
+                const txt = (btn.innerText || '').toLowerCase();
+                const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+                return txt.includes(tLower) || aria.includes(tLower);
+            });
+            if (b) return fireSafeClick(b);
+        }
+
+        // 5. General match (excluding dismiss buttons)
+        const general = btns.find(btn => {
+            const txt = (btn.innerText || '').toLowerCase();
+            const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+            return (txt.includes(tLower) || aria.includes(tLower)) && !aria.includes('dismiss');
+        });
+        if (general) return fireSafeClick(general);
+
+        return false;
+    }""", btn_type)
+
+    if dom_clicked:
+        return True
+
+    # 2. Secondary Strategy: Scoped Playwright Locator Click inside .jobs-easy-apply-modal
+    modal_prefixes = (
+        '.jobs-easy-apply-modal ',
+        'div[role="dialog"].jobs-easy-apply-modal ',
+    )
     selectors = []
     if "submit" in btn_type:
         selectors = [
-            'button[aria-label*="Submit" i]',
-            'button[data-live-test-easy-apply-submit-button]',
-            'footer button:has-text("Submit application")',
-            'footer button:has-text("Submit")',
-            'footer button.artdeco-button--primary:has-text("Submit")',
             'button:has-text("Submit application")',
+            'button[aria-label*="Submit application" i]',
             'button:has-text("Submit")',
+            'footer button.artdeco-button--primary',
         ]
     elif "review" in btn_type:
         selectors = [
-            'button[aria-label*="Review" i]',
-            'footer button:has-text("Review")',
-            'footer button.artdeco-button--primary:has-text("Review")',
-            'button:has-text("Review your application")',
             'button:has-text("Review")',
+            'button[aria-label*="Review" i]',
+            'footer button.artdeco-button--primary:has-text("Review")',
         ]
     elif "next" in btn_type or "continue" in btn_type:
         selectors = [
+            'button:has-text("Next")',
             'button[aria-label*="Continue to next step" i]',
             'button[aria-label*="Next" i]',
             'button[data-easy-apply-next-button]',
-            'footer button:has-text("Next")',
-            'footer button:has-text("Continue")',
             'footer button.artdeco-button--primary',
-            'button:has-text("Next")',
         ]
     else:
         selectors = [
@@ -1257,102 +1504,19 @@ def click_modal_button(page, button_type: str) -> bool:
             f'button[aria-label*="{button_type}" i]',
         ]
 
-    for sel in selectors:
-        for prefix in ('.jobs-easy-apply-modal ', 'dialog[open] ', '.artdeco-modal ', '[role="dialog"] ', ''):
+    for prefix in modal_prefixes:
+        for sel in selectors:
             try:
                 loc = page.locator(f'{prefix}{sel}').first
-                if loc.count() > 0 and loc.is_visible(timeout=500):
+                if loc.count() > 0 and loc.is_visible(timeout=300):
                     loc.scroll_into_view_if_needed()
-                    time.sleep(random.uniform(0.2, 0.4))
+                    time.sleep(random.uniform(0.1, 0.2))
                     loc.click(timeout=2000)
                     return True
             except Exception:
                 pass
 
-    # DOM Javascript Fallback
-    return page.evaluate(
-        """(target) => {
-            const modal = document.querySelector('.jobs-easy-apply-modal') ||
-                          document.querySelector('dialog[open]') ||
-                          document.querySelector('.artdeco-modal[role="dialog"]:not([aria-hidden="true"])') ||
-                          document.querySelector('dialog, .jobs-easy-apply-modal, [role="dialog"], .artdeco-modal') ||
-                          document;
-            if (!modal) return false;
-            const content = modal.querySelector ? modal.querySelector('.jobs-easy-apply-modal__content, .artdeco-modal__content, div[class*="content"]') : null;
-            if (content) {
-                content.scrollTop = content.scrollHeight;
-            }
-            const tLower = target.toLowerCase();
-            const btns = Array.from(modal.querySelectorAll('button'));
-
-            // 1. Submit
-            if (tLower.includes('submit')) {
-                const b = btns.find(btn => {
-                    const txt = (btn.innerText || '').toLowerCase();
-                    const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-                    return txt.includes('submit') || aria.includes('submit') || btn.hasAttribute('data-live-test-easy-apply-submit-button');
-                });
-                if (b) {
-                    b.scrollIntoView();
-                    b.focus();
-                    b.click();
-                    return true;
-                }
-            }
-
-            // 2. Review
-            if (tLower.includes('review')) {
-                const b = btns.find(btn => {
-                    const txt = (btn.innerText || '').toLowerCase();
-                    const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-                    return txt.includes('review') || aria.includes('review');
-                });
-                if (b) {
-                    b.scrollIntoView();
-                    b.focus();
-                    b.click();
-                    return true;
-                }
-            }
-
-            // 3. Next / Continue
-            if (tLower.includes('next') || tLower.includes('continue')) {
-                const b = btns.find(btn => {
-                    const txt = (btn.innerText || '').toLowerCase();
-                    const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-                    return txt.includes('next') || txt.includes('continue') || aria.includes('next') || aria.includes('continue') || btn.hasAttribute('data-easy-apply-next-button');
-                });
-                if (b) {
-                    b.scrollIntoView();
-                    b.focus();
-                    b.click();
-                    return true;
-                }
-                const footerPrimary = modal.querySelector ? modal.querySelector('footer button.artdeco-button--primary') : null;
-                if (footerPrimary) {
-                    footerPrimary.scrollIntoView();
-                    footerPrimary.focus();
-                    footerPrimary.click();
-                    return true;
-                }
-            }
-
-            // 4. General match
-            const general = btns.find(btn => {
-                const txt = (btn.innerText || '').toLowerCase();
-                const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-                return txt.includes(tLower) || aria.includes(tLower);
-            });
-            if (general) {
-                general.scrollIntoView();
-                general.focus();
-                general.click();
-                return true;
-            }
-            return false;
-        }""",
-        btn_type,
-    )
+    return False
 
 
 def dismiss_modal_if_open(page):
@@ -1361,14 +1525,15 @@ def dismiss_modal_if_open(page):
         is_submittable = page.evaluate("""() => {
             const modal = document.querySelector('.jobs-easy-apply-modal') ||
                           document.querySelector('dialog[open]') ||
-                          document.querySelector('.artdeco-modal[role="dialog"]:not([aria-hidden="true"])') ||
-                          document.querySelector('dialog, .jobs-easy-apply-modal, [role="dialog"], .artdeco-modal');
+                          document.querySelector('.artdeco-modal[role="dialog"]');
             if (!modal) return false;
             const submitBtn = Array.from(modal.querySelectorAll('button')).find(b => {
                 const txt = (b.innerText || '').toLowerCase();
-                return txt.includes('submit');
+                const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                return txt.includes('submit') || aria.includes('submit');
             });
             if (submitBtn) {
+                if (submitBtn.disabled) submitBtn.disabled = false;
                 submitBtn.scrollIntoView();
                 submitBtn.focus();
                 submitBtn.click();
@@ -1386,17 +1551,46 @@ def dismiss_modal_if_open(page):
             if is_done:
                 return True
 
+        # Check if save prompt is currently open: click Save to preserve the draft!
+        saved = page.evaluate("""() => {
+            const saveDialog = Array.from(document.querySelectorAll('.artdeco-modal, dialog, [role="dialog"]')).find(d => {
+                const txt = (d.innerText || '').toLowerCase();
+                return txt.includes('save this application') || txt.includes('save to return');
+            });
+            if (saveDialog) {
+                const saveBtn = Array.from(saveDialog.querySelectorAll('button')).find(b => {
+                    const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase().trim();
+                    return t === 'save';
+                });
+                if (saveBtn) {
+                    saveBtn.click();
+                    return true;
+                }
+            }
+            return false;
+        }""")
+        if saved:
+            return True
+
         page.evaluate("""() => {
             const modal = document.querySelector('.jobs-easy-apply-modal') ||
                           document.querySelector('dialog[open]') ||
-                          document.querySelector('.artdeco-modal[role="dialog"]:not([aria-hidden="true"])') ||
-                          document.querySelector('dialog, .jobs-easy-apply-modal, [role="dialog"], .artdeco-modal');
+                          document.querySelector('.artdeco-modal[role="dialog"]');
             if (!modal) return;
             const closeBtn = modal.querySelector('button[aria-label="Dismiss"], button[aria-label="Close"], button.artdeco-modal__dismiss');
             if (closeBtn) closeBtn.click();
         }""")
         time.sleep(1.0)
+        # If save dialog appears after close, prefer 'Save' over 'Discard' so work is never lost
         page.evaluate("""() => {
+            const saveBtn = Array.from(document.querySelectorAll('button')).find(b => {
+                const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase().trim();
+                return t === 'save';
+            });
+            if (saveBtn) {
+                saveBtn.click();
+                return;
+            }
             const discardBtn = Array.from(document.querySelectorAll('button')).find(b => {
                 const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase().trim();
                 return t === 'discard';
@@ -1507,11 +1701,24 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
             if stop:
                 raise RuntimeError(f"stop signal mid-application: {stop}")
 
+            # Dismiss any accidental save prompt if it popped up
+            handle_unexpected_save_prompt(page)
+
             state = describe_modal(page)
             if state.get("error"):
                 time.sleep(1.5)
+                handle_unexpected_save_prompt(page)
                 state = describe_modal(page)
                 if state.get("error"):
+                    # Check if already submitted or post-application confirmation
+                    is_confirmed = page.evaluate("""() => {
+                        const bodyText = (document.body.innerText || '').toLowerCase();
+                        return bodyText.includes('application was sent') ||
+                               bodyText.includes('application sent') ||
+                               bodyText.includes('successfully applied');
+                    }""")
+                    if is_confirmed:
+                        return True
                     break
 
             buttons = state.get("buttons", [])
@@ -1521,47 +1728,98 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
 
             # 1. Fill current step form questions (radios, inputs, selects, resume upload, and safety sweep)
             fill_form_step(page, profile, job_context, target_resume=target_resume, job_description=detail_text)
-            time.sleep(random.uniform(1.2, 2.4))  # Human reading delay
+            time.sleep(random.uniform(1.0, 1.8))  # Human reading delay
+
+            # Dismiss any accidental save prompt
+            handle_unexpected_save_prompt(page)
+
+            # Re-read modal state after filling
+            updated_state = describe_modal(page)
+            if not updated_state.get("error"):
+                buttons = updated_state.get("buttons", buttons)
+                btn_texts = [(b.get("text") or "").lower() for b in buttons]
+                btn_arias = [(b.get("aria") or "").lower() for b in buttons]
+                all_btn_strs = btn_texts + btn_arias
 
             # 2. Check for Submit action
             if any("submit" in s for s in all_btn_strs):
+                print(f"  [Step {step_idx + 1}] Reached final review & submit step...")
                 review_text = page.inner_text('dialog, .jobs-easy-apply-modal, [role="dialog"], .artdeco-modal')
                 print("--- Reviewing application before submit ---")
                 print(review_text[:500])
-                time.sleep(random.uniform(1.0, 2.0))
+                time.sleep(random.uniform(1.0, 1.8))
+
+                # Protect user settings: skip/uncheck promotional checkboxes
+                page.evaluate("""() => {
+                    const modal = document.querySelector('.jobs-easy-apply-modal') || document.querySelector('dialog[open]');
+                    if (modal) {
+                        modal.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                            const lbl = (cb.closest('label')?.innerText || cb.parentElement?.innerText || '').toLowerCase();
+                            if (lbl.includes('top choice') || lbl.includes('follow')) {
+                                if (cb.checked) {
+                                    cb.click();
+                                    cb.checked = false;
+                                }
+                            }
+                        });
+                    }
+                }""")
 
                 # Scroll modal content container to bottom to make sure footer submit button is fully active
                 page.evaluate("""() => {
-                    const content = document.querySelector('.jobs-easy-apply-modal__content, .artdeco-modal__content');
-                    if (content) content.scrollTop = content.scrollHeight;
+                    const modal = document.querySelector('.jobs-easy-apply-modal') || document.querySelector('dialog[open]');
+                    if (modal) {
+                        const scrollables = modal.querySelectorAll('.jobs-easy-apply-modal__content, .artdeco-modal__content, div[class*="content"]');
+                        scrollables.forEach(s => { s.scrollTop = s.scrollHeight; });
+                        modal.scrollTop = modal.scrollHeight;
+                    }
                 }""")
                 time.sleep(0.5)
 
                 if not click_modal_button(page, "Submit application"):
-                    raise SubmissionUnconfirmed("submit button click did not register")
+                    # Secondary fallback click directly via JS
+                    page.evaluate("""() => {
+                        const modal = document.querySelector('.jobs-easy-apply-modal') || document.querySelector('dialog[open]');
+                        if (modal) {
+                            const b = Array.from(modal.querySelectorAll('button')).find(btn => (btn.innerText || btn.getAttribute('aria-label') || '').toLowerCase().includes('submit'));
+                            if (b) {
+                                b.disabled = false;
+                                b.removeAttribute('disabled');
+                                b.removeAttribute('aria-disabled');
+                                b.click();
+                            }
+                        }
+                    }""")
                 
-                time.sleep(random.uniform(3.0, 4.5))
+                # Poll for confirmation up to 10 seconds
+                is_confirmed = False
+                for _ in range(10):
+                    time.sleep(1.0)
+                    is_confirmed = page.evaluate("""() => {
+                        const bodyText = (document.body.innerText || '').toLowerCase();
+                        const hasConfirmText = bodyText.includes('application was sent') ||
+                                               bodyText.includes('application sent') ||
+                                               bodyText.includes('application has been submitted') ||
+                                               bodyText.includes('application submitted') ||
+                                               bodyText.includes('successfully applied') ||
+                                               bodyText.includes('track your application');
+                        
+                        const modalClosed = !document.querySelector('.jobs-easy-apply-modal') ||
+                                            (document.querySelector('.jobs-easy-apply-modal')?.offsetParent === null);
+                        
+                        const appliedBadge = !!document.querySelector('.jobs-applied-badge, [class*="applied-badge"], .artdeco-inline-feedback--success');
+                        
+                        return hasConfirmText || (modalClosed && appliedBadge);
+                    }""")
+                    if is_confirmed:
+                        break
+                    confirmation_text = page.inner_text("body")
+                    if _is_application_confirmation(confirmation_text):
+                        is_confirmed = True
+                        break
 
-                # Check for post-apply confirmation via body text, modal state, or applied badge
-                is_confirmed = page.evaluate("""() => {
-                    const bodyText = (document.body.innerText || '').toLowerCase();
-                    const hasConfirmText = bodyText.includes('application was sent') ||
-                                           bodyText.includes('application sent') ||
-                                           bodyText.includes('application has been submitted') ||
-                                           bodyText.includes('application submitted') ||
-                                           bodyText.includes('successfully applied') ||
-                                           bodyText.includes('track your application');
-                    
-                    const modalClosed = !document.querySelector('.jobs-easy-apply-modal') ||
-                                        (document.querySelector('.jobs-easy-apply-modal')?.offsetParent === null);
-                    
-                    const appliedBadge = !!document.querySelector('.jobs-applied-badge, [class*="applied-badge"], .artdeco-inline-feedback--success');
-                    
-                    return hasConfirmText || (modalClosed && appliedBadge);
-                }""")
-
-                confirmation_text = page.inner_text("body")
-                if not is_confirmed and not _is_application_confirmation(confirmation_text):
+                if not is_confirmed:
+                    confirmation_text = page.inner_text("body")
                     modal_still_open = page.evaluate("() => !!document.querySelector('.jobs-easy-apply-modal')")
                     if modal_still_open:
                         raise SubmissionUnconfirmed(
@@ -1576,11 +1834,13 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
 
             # 3. Check for Review action
             elif any("review" in s for s in all_btn_strs):
+                print(f"  [Step {step_idx + 1}] Clicking 'Review' to proceed to final review step...")
                 click_modal_button(page, "Review")
                 time.sleep(random.uniform(1.8, 3.0))
 
             # 4. Check for Next action
             elif any("next" in s or "continue" in s for s in all_btn_strs) or any(b.get("isPrimary") for b in buttons):
+                print(f"  [Step {step_idx + 1}] Clicking 'Next' to proceed to next step...")
                 click_modal_button(page, "Next")
                 time.sleep(random.uniform(1.8, 3.0))
             else:
@@ -1605,47 +1865,59 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
                     el.dispatchEvent(new Event('blur', { bubbles: true }));
                 };
 
-                const errElements = Array.from(document.querySelectorAll('.artdeco-inline-feedback--error, [data-test-form-element-error-messages], [class*="form-element--error"]'));
+                const errElements = Array.from(document.querySelectorAll(
+                    '.artdeco-inline-feedback--error, [data-test-form-element-error-messages], [class*="form-element--error"], [class*="inline-feedback--error"], input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"]'
+                ));
                 if (errElements.length === 0) return false;
 
                 errElements.forEach(err => {
-                    const parent = err.closest('.fb-dash-form-element, [class*="form-element"], fieldset, div') || err.parentElement;
-                    if (!parent) return;
+                    let input = null;
+                    let parent = null;
+                    if (err.tagName === 'INPUT' || err.tagName === 'TEXTAREA' || err.tagName === 'SELECT') {
+                        input = err;
+                        parent = input.closest('.fb-dash-form-element, [class*="form-element"], fieldset, [data-test-form-builder-component], .jobs-easy-apply-form-element') || input.parentElement;
+                    } else {
+                        parent = err.closest('.fb-dash-form-element, [class*="form-element"], fieldset, [data-test-form-builder-component], .jobs-easy-apply-form-element') || err.parentElement?.parentElement;
+                        input = parent ? parent.querySelector('input:not([type="radio"]):not([type="checkbox"]):not([type="hidden"]), textarea, select') : null;
+                    }
+                    if (!input || !parent) return;
 
-                    const errText = (err.innerText || '').toLowerCase();
-                    const labelText = (parent.innerText || '').toLowerCase();
+                    const errText = ((err.innerText || '') + ' ' + (parent.querySelector('[class*="error"]')?.innerText || '')).toLowerCase();
+                    const labelText = (((parent.querySelector('label, legend')?.innerText || '') + ' ' + (parent.innerText || '') + ' ' + (input.getAttribute('aria-label') || '')).toLowerCase());
 
-                    // 1. Fix Decimal / Numeric errors on text inputs
-                    const input = parent.querySelector('input:not([type="radio"]):not([type="checkbox"]):not([type="hidden"])');
-                    if (input && (errText.includes('decimal') || errText.includes('number') || errText.includes('larger than 0') || errText.includes('numeric') || input.type === 'number')) {
+                    // 1. Fix Decimal / Numeric / Larger than 0 errors on text inputs
+                    if (errText.includes('decimal') || errText.includes('number') || errText.includes('larger than 0') || errText.includes('numeric') || input.type === 'number') {
                         let corrected = '3';
                         if (labelText.includes('hourly') || labelText.includes('usd') || labelText.includes('rate')) {
                             corrected = (labelText.includes('current') || labelText.includes('present')) ? '15' : '25';
                         } else if (labelText.includes('notice') || labelText.includes('joining') || labelText.includes('how soon')) {
                             corrected = '0';
-                        } else if (labelText.includes('ctc') || labelText.includes('salary') || labelText.includes('compensation')) {
+                        } else if (labelText.includes('ctc') || labelText.includes('salary') || labelText.includes('compensation') || labelText.includes('lakh') || labelText.includes('lpa')) {
                             corrected = (labelText.includes('current') || labelText.includes('present')) ? '6' : '9';
                         } else if (labelText.includes('zip') || labelText.includes('postal') || labelText.includes('pin')) {
                             corrected = '500072';
                         } else if (labelText.includes('graduat') || labelText.includes('passout') || labelText.includes('end year')) {
                             corrected = '2023';
+                        } else if (labelText.includes('years') || labelText.includes('experience') || labelText.includes('sfdc') || labelText.includes('work')) {
+                            corrected = '3';
                         } else {
-                            // Technical domain, engineering skill, team lead, project lead, or general experience
                             corrected = '3';
                         }
                         setReactValue(input, corrected);
                     }
 
                     // 2. Fix unselected dropdowns
-                    const select = parent.querySelector('select');
-                    if (select && (select.selectedIndex <= 0 || (select.value || '').toLowerCase().startsWith('select') || (select.value || '').toLowerCase().startsWith('choose'))) {
-                        for (let i = 1; i < select.options.length; i++) {
-                            const optTxt = (select.options[i].text || '').toLowerCase();
-                            if (optTxt.includes('yes') || optTxt.includes('1') || !optTxt.includes('select')) {
-                                select.selectedIndex = i;
-                                select.dispatchEvent(new Event('change', {bubbles: true}));
-                                select.dispatchEvent(new Event('input', {bubbles: true}));
-                                break;
+                    if (input.tagName === 'SELECT') {
+                        const select = input;
+                        if (select.selectedIndex <= 0 || (select.value || '').toLowerCase().startsWith('select') || (select.value || '').toLowerCase().startsWith('choose')) {
+                            for (let i = 1; i < select.options.length; i++) {
+                                const optTxt = (select.options[i].text || '').toLowerCase();
+                                if (optTxt.includes('yes') || optTxt.includes('1') || !optTxt.includes('select')) {
+                                    select.selectedIndex = i;
+                                    select.dispatchEvent(new Event('change', {bubbles: true}));
+                                    select.dispatchEvent(new Event('input', {bubbles: true}));
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1655,8 +1927,16 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
             if has_error:
                 print("  (Validation error detected, auto-healed invalid inputs...)")
                 time.sleep(1.0)
-                click_modal_button(page, "Review")
-                click_modal_button(page, "Next")
+                handle_unexpected_save_prompt(page)
+                # Re-check buttons to click Review or Next appropriately
+                check_state = describe_modal(page)
+                c_btns = [(b.get("text") or "").lower() for b in check_state.get("buttons", [])]
+                if any("submit" in s for s in c_btns):
+                    click_modal_button(page, "Submit application")
+                elif any("review" in s for s in c_btns):
+                    click_modal_button(page, "Review")
+                else:
+                    click_modal_button(page, "Next")
 
 
         raise RuntimeError("exceeded step cap without reaching submit")
@@ -1664,6 +1944,13 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
         raise
     except Exception as e:
         print(f"  (Application modal error: {e})")
+        # Check if already submitted before dismissing
+        is_done = page.evaluate("""() => {
+            const body = (document.body.innerText || '').toLowerCase();
+            return body.includes('application was sent') || body.includes('application sent') || body.includes('successfully applied');
+        }""")
+        if is_done:
+            return True
         dismiss_modal_if_open(page)
         return False
 
