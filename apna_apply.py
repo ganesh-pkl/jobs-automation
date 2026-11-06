@@ -482,7 +482,8 @@ def handle_apna_screening_modal(page, job_info: dict, profile: Profile, dry_run:
             if file_inputs:
                 from common.resume_selector import get_resume_path
                 job_ctx = f"{job_info.get('title', '')} at {job_info.get('company', '')}"
-                resume_path = get_resume_path(profile, job_context=job_ctx)
+                jd_desc = job_info.get('description', '') or job_info.get('snippet', '')
+                resume_path = get_resume_path(profile, job_context=job_ctx, job_description=jd_desc)
                 if resume_path and resume_path.is_file():
                     for fi in file_inputs:
                         try:

@@ -757,13 +757,13 @@ def _fill_hirist_selects(page, profile: Profile, job_context: str):
         print(f"    (Note on selects: {e})")
 
 
-def _upload_hirist_resume(page, profile: Profile, job_context: str):
+def _upload_hirist_resume(page, profile: Profile, job_context: str, job_description: str = ""):
     """Uploads candidate resume if file input is present."""
     try:
         file_inputs = page.locator("input[type='file'], input[name*='resume' i], input[name*='cv' i]").all()
         if file_inputs:
             from common.resume_selector import get_resume_path
-            resume_path = get_resume_path(profile, job_context=job_context, generate_dynamic=True)
+            resume_path = get_resume_path(profile, job_context=job_context, job_description=job_description, generate_dynamic=True)
             if resume_path and resume_path.is_file():
                 for fi in file_inputs:
                     try:
@@ -987,7 +987,11 @@ def handle_hirist_screening(job_page, profile: Profile, title: str, company: str
         _fill_hirist_radios(job_page, profile, job_context)
         _fill_hirist_pills(job_page, profile, job_context)
         _fill_hirist_selects(job_page, profile, job_context)
-        _upload_hirist_resume(job_page, profile, job_context)
+        try:
+            jd_desc = job_page.locator(".job-description, .job-details, .jd-desc, .description").first.inner_text(timeout=1000)
+        except Exception:
+            jd_desc = ""
+        _upload_hirist_resume(job_page, profile, job_context, job_description=jd_desc)
         
         time.sleep(0.5)
 

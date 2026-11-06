@@ -40,7 +40,7 @@ class ResumeGeneratorTests(unittest.TestCase):
         self.assertEqual(sanitize_filename_token("Google / DeepMind!"), "Google_DeepMind")
 
     def test_extract_matching_skills(self):
-        jd = "Looking for Core Java, Spring Boot, Microservices, Docker, PostgreSQL, and JUnit skills."
+        jd = "Looking for Core Java, Spring Boot, Microservices, Docker, PostgreSQL, and FastAPI skills."
         matched = extract_matching_skills(jd)
         keys = [k for k, _ in matched]
         self.assertIn("java", keys)
@@ -48,7 +48,19 @@ class ResumeGeneratorTests(unittest.TestCase):
         self.assertIn("microservices", keys)
         self.assertIn("docker", keys)
         self.assertIn("postgresql", keys)
-        self.assertIn("junit", keys)
+        self.assertIn("fastapi", keys)
+
+    def test_tailor_technical_skills(self):
+        from common.resume_generator import tailor_technical_skills
+        tex_path = RESUMES_DIR / "Ganesh_Pirikirala_FullStack_Resume.tex"
+        tex = tex_path.read_text(encoding="utf-8")
+        jd = "We need an engineer experienced with FastAPI, Python, PostgreSQL, and React.js."
+        matched = [("fastapi", "FastAPI"), ("python", "Python"), ("postgresql", "PostgreSQL"), ("react", "React.js")]
+        tailored = tailor_technical_skills(tex, matched, jd)
+        self.assertIn(r"\section{Technical Skills}", tailored)
+        skills_block = tailored[tailored.find(r"\section{Technical Skills}"):tailored.find(r"\section{Professional Experience}")]
+        self.assertTrue(skills_block.find("FastAPI") < skills_block.find("Node.js"))
+        self.assertTrue(skills_block.find("Python") < skills_block.find("Node.js"))
 
     def test_reorder_projects_for_enterprise_ecommerce(self):
         tex_path = RESUMES_DIR / "Ganesh_Pirikirala_Java_FullStack_Resume.tex"

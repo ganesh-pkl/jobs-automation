@@ -247,7 +247,7 @@ def _is_application_confirmation(page_text: str, button_text: str = "") -> bool:
     return any(ind in comb for ind in success_indicators)
 
 
-def handle_screening_form(page, profile: Profile, job_title: str, company: str) -> bool:
+def handle_screening_form(page, profile: Profile, job_title: str, company: str, job_description: str = "") -> bool:
     """
     Handles any screening questions modal or multi-step questionnaire on Foundit.
     Loops through multi-step forms (Next -> Next -> Submit) until finished.
@@ -336,7 +336,7 @@ def handle_screening_form(page, profile: Profile, job_title: str, company: str) 
         file_inputs = container.locator("input[type='file'], input[name*='resume' i], input[name*='cv' i]").all()
         if file_inputs:
             from common.resume_selector import get_resume_path
-            resume_path = get_resume_path(profile, job_context=job_context)
+            resume_path = get_resume_path(profile, job_context=job_context, job_description=job_description, company=company)
             if resume_path and resume_path.is_file():
                 for fi in file_inputs:
                     try:
@@ -666,7 +666,11 @@ def run(role: str | None = None, limit: int | None = None, dry_run: bool = False
                         time.sleep(2)
 
                         # Handle screening modal if presented
-                        handle_screening_form(page, profile, title, company)
+                        try:
+                            jd_desc = page.locator(".job-description, .jd-desc, .job-details, .jd-container").first.inner_text(timeout=1000)
+                        except Exception:
+                            jd_desc = ""
+                        handle_screening_form(page, profile, title, company, job_description=jd_desc)
 
                         # Verify success
                         time.sleep(2)

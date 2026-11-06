@@ -3,6 +3,7 @@ Dynamic Resume Generator for automated job applications.
 Tailors ATS-optimized LaTeX resumes from candidate facts and compiles them to PDF on-the-fly per job application.
 """
 from datetime import datetime
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -15,6 +16,7 @@ RESUMES_DIR = PROJECT_ROOT / "resumes"
 GENERATED_DIR = RESUMES_DIR / "generated"
 
 # Catalog of candidate's authentic skills (strictly verified facts, no fabrication)
+# Tuple: (Display Name, Regex Pattern)
 AUTHENTIC_SKILLS_CATALOG = {
     "java": ("Core Java", r"\b(java|core\s+java|jvm|j2ee)\b"),
     "spring_boot": ("Spring Boot", r"\b(spring\s*boot|spring\s*mvc|spring\s*framework)\b"),
@@ -29,11 +31,11 @@ AUTHENTIC_SKILLS_CATALOG = {
     "sql": ("SQL", r"\b(sql|relational\s+database)\b"),
     "hikaricp": ("HikariCP", r"\b(hikaricp|connection\s+pool)\b"),
     "docker": ("Docker", r"\b(docker|containerization|containers)\b"),
-    "kubernetes": ("Kubernetes", r"\b(kubernetes|k8s)\b"),
     "aws": ("AWS", r"\b(aws|amazon\s+web\s+services|ec2|s3)\b"),
     "azure": ("Azure", r"\b(azure)\b"),
     "git": ("Git", r"\b(git|github|gitlab|version\s+control)\b"),
     "ci_cd": ("CI/CD", r"\b(ci[\s/-]?cd|github\s+actions|jenkins|pipelines)\b"),
+    "linux": ("Linux", r"\b(linux|unix|bash|shell)\b"),
     "python": ("Python", r"\b(python|python3)\b"),
     "fastapi": ("FastAPI", r"\b(fastapi)\b"),
     "django": ("Django", r"\b(django)\b"),
@@ -61,7 +63,6 @@ AUTHENTIC_SKILLS_CATALOG = {
     "spring_ai": ("Spring AI", r"\b(spring\s*ai)\b"),
     "system_design": ("System Design (LLD/HLD)", r"\b(system\s+design|lld|hld|low[\s-]level\s+design|high[\s-]level\s+design)\b"),
     "solid": ("SOLID Principles", r"\b(solid|clean\s+architecture|design\s+patterns)\b"),
-    "junit": ("JUnit", r"\b(junit|junit5|unit\s+test|mockito)\b"),
     "postman": ("Postman", r"\b(postman|swagger|api\s+docs)\b"),
 }
 
@@ -70,7 +71,7 @@ PROJECT_KEYWORDS = {
     "SpringBoot-E-commerce-Backend": [
         "java", "spring boot", "spring", "microservices", "hibernate", "jpa",
         "ecommerce", "e-commerce", "sql", "postgresql", "order", "payment",
-        "backend", "enterprise", "junit"
+        "backend", "enterprise"
     ],
     "AI PDF Knowledge Assistant": [
         "rag", "llm", "langchain", "vector", "qdrant", "embeddings", "ollama",
@@ -160,6 +161,76 @@ def extract_matching_skills(jd_and_title: str) -> List[Tuple[str, str]]:
     return matched
 
 
+def tailor_technical_skills(tex_content: str, matched_skills: List[Tuple[str, str]], jd_text: str) -> str:
+    """
+    Dynamically prioritizes technical skills within each category in the LaTeX Technical Skills section
+    based on the Job Description keywords and matching authentic skills.
+    Ensures that matching skills appear first, and all claims are strictly authentic.
+    """
+    if not jd_text and not matched_skills:
+        return tex_content
+
+    # Match the Technical Skills tabularx environment
+    m = re.search(
+        r'(\\section\{Technical Skills\}\s*(?:\\renewcommand\{\\arraystretch\}\{[^}]+\}\s*)?\\begin\{tabularx\}\{[^}]+\}\{@\{\}l X@\{\}\}\s*)([\s\S]*?)(\\end\{tabularx\})',
+        tex_content
+    )
+    if not m:
+        return tex_content
+
+    header = m.group(1)
+    body = m.group(2)
+    footer = m.group(3)
+
+    # Split rows by '\\'
+    rows = [r.strip() for r in body.strip().split(r'\\') if r.strip()]
+    matched_names = {display.lower(): display for _, display in matched_skills}
+    jd_lower = (jd_text or "").lower()
+
+    updated_rows = []
+    for row in rows:
+        # Match \textbf{Category:} & Skill1, Skill2, ...
+        row_m = re.match(r'(\\textbf\{[^}]+\}:?\s*&\s*)(.*)', row)
+        if not row_m:
+            updated_rows.append(row)
+            continue
+
+        cat_prefix = row_m.group(1)
+        skills_str = row_m.group(2).strip()
+
+        # Split skills by comma
+        raw_skills = [s.strip() for s in skills_str.split(',') if s.strip()]
+
+        prioritized = []
+        regular = []
+
+        for skill in raw_skills:
+            skill_clean = re.sub(r'\(.*?\)', '', skill).strip().lower()
+            is_matched = False
+            if skill_clean and skill_clean in jd_lower:
+                is_matched = True
+            elif any(k in skill_clean or skill_clean in k for k in matched_names):
+                is_matched = True
+            else:
+                for key, (disp, pat) in AUTHENTIC_SKILLS_CATALOG.items():
+                    if disp.lower() in skill.lower() and re.search(pat, jd_lower):
+                        is_matched = True
+                        break
+
+            if is_matched:
+                prioritized.append(skill)
+            else:
+                regular.append(skill)
+
+        # Front-load matching skills, followed by the rest
+        reordered_skills = prioritized + regular
+        new_row_content = ", ".join(reordered_skills)
+        updated_rows.append(f"{cat_prefix}{new_row_content}")
+
+    new_body = " \\\\\n".join(updated_rows) + " \\\\"
+    return tex_content[:m.start()] + f"{header}\n{new_body}\n{footer}" + tex_content[m.end():]
+
+
 def reorder_projects_in_latex(tex_content: str, jd_text: str) -> str:
     """
     Reorders the 3 projects in the Featured Projects section according to keyword overlap with JD.
@@ -238,23 +309,17 @@ def tailor_professional_summary(
         return tex_content
 
     current_summary = m.group(2).strip()
-
-    # If specific high-priority skills are in JD, format them into bold highlights
     core_skill_names = [display for _, display in matched_skills[:7]]
 
     # Tailor summary based on role category and matching skills
     tailored = current_summary
     if "Java" in role_category:
-        has_microservices = any(k in ["microservices", "spring_boot", "spring_data"] for k, _ in matched_skills)
-        has_cloud = any(k in ["aws", "azure", "docker", "ci_cd", "kubernetes"] for k, _ in matched_skills)
-        has_db = any(k in ["postgresql", "mysql", "sql", "hikaricp"] for k, _ in matched_skills)
-
         skills_str = ", ".join(core_skill_names) if core_skill_names else "Core Java, Spring Boot, Spring Data JPA, Hibernate, REST APIs, and PostgreSQL"
         tailored = (
             f"Java Full Stack Developer with nearly 3 years of experience architecting and implementing "
             f"scalable enterprise microservices, high-throughput REST APIs, and reactive full-stack web applications. "
             f"Skilled in \\textbf{{{skills_str}}}, with hands-on frontend expertise in \\textbf{{React.js, Next.js, and Angular}}. "
-            f"Proficient with \\textbf{{Docker, Azure, AWS, Git, CI/CD, and JUnit/Mockito}}, alongside modern AI application engineering (Spring AI, RAG). "
+            f"Proficient with \\textbf{{Docker, Azure, AWS, Git, and CI/CD}}, alongside modern AI application engineering (Spring AI, RAG). "
             f"Adept at clean system design (LLD/HLD, SOLID) and database connection pool tuning with HikariCP."
         )
     elif "AI / ML" in role_category or "AI Engineer" in role_category:
@@ -299,17 +364,17 @@ def tailor_professional_summary(
     return tex_content[:m.start(2)] + tailored + tex_content[m.end(2):]
 
 
-def tailor_header_comment(tex_content: str, role_category: str, company: str, matched_skills: List[Tuple[str, str]]) -> str:
-    """Updates the top LaTeX comment header with ATS targeting information."""
+def tailor_header_comment(tex_content: str, role_category: str, company: str, matched_skills: List[Tuple[str, str]], jd_hash: str = "") -> str:
+    """Updates the top LaTeX comment header with ATS targeting information and JD hash."""
     comp_clean = clean_company_name(company) if company else "Enterprise Roles"
     skills_preview = ", ".join([d for _, d in matched_skills[:6]]) if matched_skills else role_category
     header = (
         f"%-----------------------------------------------------------------------------------------------------------------------------------------------%\n"
         f"%   Ganesh Pirikirala - {role_category} Resume (Tailored for {comp_clean})\n"
         f"%   ATS-Optimized for {skills_preview}\n"
+        f"%   JD-Hash: {jd_hash}\n"
         f"%-----------------------------------------------------------------------------------------------------------------------------------------------%"
     )
-    # Replace the initial comment block if present
     return re.sub(r"^%--+[\s\S]*?%--+", header, tex_content, count=1)
 
 
@@ -331,7 +396,6 @@ def generate_targeted_resume(
     # 1. Check if tectonic compiler is available
     tectonic_bin = find_tectonic()
     if not tectonic_bin:
-        # Fall back to static selector without compiler
         return None, "tectonic compiler not found"
 
     # 2. Check if dynamic resume generation is enabled in profile
@@ -354,7 +418,6 @@ def generate_targeted_resume(
     base_tex_name = static_path.stem + ".tex"
     base_tex_path = RESUMES_DIR / base_tex_name
     if not base_tex_path.is_file():
-        # Fallback to general fullstack if specific tex doesn't exist
         base_tex_path = RESUMES_DIR / "Ganesh_Pirikirala_FullStack_Resume.tex"
         if not base_tex_path.is_file():
             return static_path, f"using static base resume ({static_path.name})"
@@ -363,20 +426,27 @@ def generate_targeted_resume(
     role_def = next((d for d in RESUME_DEFINITIONS if d["filename"] == static_path.name), None)
     role_category = role_def["role_category"] if role_def else "Full Stack Developer"
 
-    # 4. Compute unique cached filename
+    # 4. Compute unique cached filename & JD hash
     comp_clean = clean_company_name(company)
     comp_slug = sanitize_filename_token(comp_clean) if comp_clean else "Target"
     role_slug = sanitize_filename_token(role_category.split("/")[0].strip())
+
+    jd_norm = re.sub(r"\s+", " ", f"{job_title} {job_description}".strip().lower())
+    jd_hash = hashlib.md5(jd_norm.encode("utf-8")).hexdigest()[:8] if jd_norm else "default"
 
     target_tex_name = f"Ganesh_Pirikirala_{comp_slug}_{role_slug}_Resume.tex"
     target_pdf_name = f"Ganesh_Pirikirala_{comp_slug}_{role_slug}_Resume.pdf"
     target_tex_path = GENERATED_DIR / target_tex_name
     target_pdf_path = GENERATED_DIR / target_pdf_name
 
-    # Check cache: If PDF exists, is non-empty, and newer than base template, reuse immediately!
-    if not force_regenerate and target_pdf_path.is_file() and target_pdf_path.stat().st_size > 1000:
-        if target_pdf_path.stat().st_mtime >= base_tex_path.stat().st_mtime:
-            return target_pdf_path, f"cached dynamic resume for {comp_clean} ({role_category})"
+    # Check cache: If PDF and TEX exist, and TEX has matching JD-Hash, reuse cached!
+    if not force_regenerate and target_pdf_path.is_file() and target_tex_path.is_file() and target_pdf_path.stat().st_size > 1000:
+        try:
+            head = target_tex_path.read_text(encoding="utf-8")[:600]
+            if f"JD-Hash: {jd_hash}" in head:
+                return target_pdf_path, f"cached dynamic resume for {comp_clean} ({role_category})"
+        except Exception:
+            pass
 
     # 5. Extract matching skills from JD + Title
     combined_ctx = f"{job_title} {job_description}".strip()
@@ -390,13 +460,16 @@ def generate_targeted_resume(
 
     # 7. Apply Tailoring
     try:
-        # A. Header ATS comment
-        tex_content = tailor_header_comment(tex_content, role_category, company, matched_skills)
+        # A. Header ATS comment with JD hash
+        tex_content = tailor_header_comment(tex_content, role_category, company, matched_skills, jd_hash)
 
-        # B. Professional Summary
+        # B. Professional Summary tailored to role, company, and matched skills
         tex_content = tailor_professional_summary(tex_content, role_category, company, job_description, matched_skills)
 
-        # C. Reorder Featured Projects based on JD match
+        # C. Technical Skills tailored: prioritize matching skills in each category
+        tex_content = tailor_technical_skills(tex_content, matched_skills, job_description)
+
+        # D. Reorder Featured Projects based on JD match
         tex_content = reorder_projects_in_latex(tex_content, combined_ctx)
 
         # Save tailored .tex

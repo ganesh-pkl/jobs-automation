@@ -51,25 +51,27 @@ EXCLUDED_SENIORITY_KEYWORDS = [
     "manager", "vp", "vice president", "sr.", "sr ", "senior", "group lead",
 ]
 
+_last_skip_reason: str = ""
+
 
 def extract_experience_requirement(text: str) -> int | None:
     """Extracts minimum years of experience required from text. Returns min_years or None."""
     if not text:
         return None
     lower = text.lower()
-    
-    # Check "X+ years", "X-Y years", "X to Y years", "X yrs"
-    matches = re.findall(r"(\d+)\s*(?:-|to|\+)\s*(?:(\d+)\s*)?(?:years?|yrs?)", lower)
-    for m in matches:
-        try:
-            val = int(m[0])
-            if 1 <= val <= 25:
-                return val
-        except (ValueError, IndexError):
-            pass
-            
-    # Check "minimum X years", "at least X years", "min X years"
-    min_match = re.search(r"(?:minimum|at least|min\.?)\s*(\d+)\s*(?:years?|yrs?)", lower)
+
+    # Pre-clean company history/age phrases to avoid false positives (e.g. "for over 20 years", "in business for 15 years")
+    cleaned = re.sub(
+        r"(?:for\s+(?:more\s+than\s+|over\s+)?|in\s+business\s+for\s+|operating\s+for\s+|serving\s+(?:clients\s+)?for\s+|history\s+of\s+|founded\s+)\d+\+?\s*(?:years?|yrs?)",
+        "",
+        lower,
+    )
+
+    # 1. Check "minimum X years", "at least X years", "min X years", "requires X+ years"
+    min_match = re.search(
+        r"(?:minimum|min\.?|at least|requires?|requiring|seeking|must have|should have)\s*(?:a\s+minimum\s+of\s*)?(\d+)\s*(?:-|to|\+)?\s*(?:(\d+)\s*)?(?:years?|yrs?)",
+        cleaned,
+    )
     if min_match:
         try:
             val = int(min_match.group(1))
@@ -77,8 +79,55 @@ def extract_experience_requirement(text: str) -> int | None:
                 return val
         except ValueError:
             pass
-            
+
+    # 2. Check "X+ years of experience", "X-Y years experience", "X to Y years of experience", "X yrs experience"
+    exp_matches = re.findall(
+        r"(\d+)\s*(?:-|to|\+)\s*(?:(\d+)\s*)?(?:years?|yrs?)(?:\s+of)?\s+(?:work\s+|professional\s+|relevant\s+|hands-on\s+)?experience",
+        cleaned,
+    )
+    for m in exp_matches:
+        try:
+            val = int(m[0])
+            if 1 <= val <= 25:
+                return val
+        except (ValueError, IndexError):
+            pass
+
+    # 3. Check "X-Y years in [skill/field]" or "X+ years with [skill]"
+    skill_matches = re.findall(
+        r"(\d+)\s*(?:-|to|\+)\s*(?:(\d+)\s*)?(?:years?|yrs?)(?:\s+(?:in|with|using|of)\s+[a-z#+]+)",
+        cleaned,
+    )
+    for m in skill_matches:
+        try:
+            val = int(m[0])
+            if 1 <= val <= 25:
+                return val
+        except (ValueError, IndexError):
+            pass
+
     return None
+
+
+DEBUG_SCREENSHOTS_DIR = Path("/Users/ganeshpirikirala/.gemini/antigravity/brain/b5f5ae6c-9107-4d5f-ad30-f7cef198b8d0/debug_screenshots")
+DEBUG_SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+LOCAL_SCREENSHOTS_DIR = Path("debug_screenshots")
+LOCAL_SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def save_debug_screenshot(page, name: str) -> Path | None:
+    try:
+        ts = datetime.now().strftime("%H%M%S")
+        safe_name = re.sub(r"[^\w\-_\.]", "_", name)
+        filename = f"{ts}_{safe_name}.png"
+        artifact_path = DEBUG_SCREENSHOTS_DIR / filename
+        local_path = LOCAL_SCREENSHOTS_DIR / filename
+        page.screenshot(path=str(artifact_path))
+        page.screenshot(path=str(local_path))
+        print(f"  📸 [Screenshot] {filename}")
+        return artifact_path
+    except Exception:
+        return None
 
 
 def _resume_path(profile: Profile, job_context: str = "") -> Path | None:
@@ -1118,7 +1167,7 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
             fill_text_field(page, field_id, str(ans))
             time.sleep(random.uniform(0.2, 0.4))
 
-    # 3. Third pass: Ensure resume radio is selected if present, prioritizing role-matching resume
+    # 3. Third pass: Handle resume upload & radio selection, ensuring dynamic ATS resume is uploaded and selected
     try:
         from common.resume_selector import get_resume_path
         chosen_resume = target_resume or get_resume_path(profile, job_context=job_context, job_description=job_description)
@@ -1138,6 +1187,41 @@ def fill_form_step(page, profile: Profile, job_context: str, target_resume: Path
         if "full" in ctx_lower and "stack" in ctx_lower:
             role_kw.append("fullstack")
 
+        # Detect if the modal currently contains a resume upload or resume selection section
+        has_resume_section = page.evaluate("""() => {
+            const modal = document.querySelector('.jobs-easy-apply-modal, dialog[open], .artdeco-modal[role="dialog"], [role="dialog"]');
+            if (!modal) return false;
+            const text = (modal.innerText || '').toLowerCase();
+            const hasUpload = modal.querySelector('input[type="file"], .jobs-document-upload, [data-test-document-upload]') !== null;
+            return text.includes('resume') || hasUpload;
+        }""")
+
+        if has_resume_section and chosen_resume and chosen_resume.is_file():
+            # Check if target_name is already present in existing radios
+            is_already_in_radios = page.evaluate("""(tName) => {
+                if (!tName) return false;
+                const radios = Array.from(document.querySelectorAll(
+                    'input[type="radio"][name*="resume"], input[type="radio"][id*="resume"], div[class*="document-upload"] input[type="radio"], div[class*="jobs-document-upload"] input[type="radio"]'
+                ));
+                const tLower = tName.toLowerCase();
+                return radios.some(r => {
+                    const label = document.querySelector(`label[for="${r.id}"]`)?.innerText || '';
+                    const container = r.closest('div[class*="upload"], li, div[class*="card"], label')?.innerText || '';
+                    return (label + ' ' + container).toLowerCase().includes(tLower);
+                });
+            }""", target_name)
+
+            if not is_already_in_radios:
+                try:
+                    file_inputs = page.locator('dialog input[type="file"], [role="dialog"] input[type="file"], .artdeco-modal input[type="file"], .jobs-easy-apply-modal input[type="file"], input[type="file"]')
+                    if file_inputs.count() > 0:
+                        file_inputs.first.set_input_files(str(chosen_resume.resolve()))
+                        print(f"  📄 [Uploaded Dynamic ATS Resume to LinkedIn] {chosen_resume.name}")
+                        time.sleep(random.uniform(1.8, 2.5))
+                except Exception as ue:
+                    pass
+
+        # Select the matching resume radio
         page.evaluate("""({targetName, roleKeywords}) => {
             const resumeRadios = Array.from(document.querySelectorAll(
                 'input[type="radio"][name*="resume"], input[type="radio"][id*="resume"], div[class*="document-upload"] input[type="radio"], div[class*="jobs-document-upload"] input[type="radio"]'
@@ -1358,7 +1442,8 @@ def click_modal_button(page, button_type: str) -> bool:
     """
     Clicks modal action buttons ('Next', 'Review', 'Submit application', 'Done', etc.)
     scoped strictly to the Easy Apply modal to prevent clicking the backdrop or triggering discard prompts.
-    Uses direct DOM synthetic event dispatch first to ensure no overlay clicks.
+    Uses Playwright native locator clicks first (with trusted real mouse events),
+    falling back to direct DOM synthetic event dispatch.
     """
     time.sleep(random.uniform(0.3, 0.6))
     btn_type = button_type.lower()
@@ -1366,7 +1451,66 @@ def click_modal_button(page, button_type: str) -> bool:
     # Handle any unexpected save prompt if present before attempting click
     handle_unexpected_save_prompt(page)
 
-    # 1. Primary Strategy: Direct DOM JavaScript Event Dispatch strictly inside .jobs-easy-apply-modal
+    # 1. Primary Strategy: Real Playwright Native Click scoped strictly inside the active modal
+    modal_scopes = [
+        '[role="dialog"] ',
+        '.artdeco-modal ',
+        '.jobs-easy-apply-modal ',
+        'dialog[open] ',
+        'dialog ',
+        'div[data-test-modal] ',
+    ]
+
+    selectors = []
+    if "submit" in btn_type:
+        selectors = [
+            'button:has-text("Submit application")',
+            'button[aria-label*="Submit application" i]',
+            'button:has-text("Submit")',
+            'footer button.artdeco-button--primary',
+            '[data-live-test-easy-apply-submit-button]',
+        ]
+    elif "review" in btn_type:
+        selectors = [
+            'button:has-text("Review")',
+            'button[aria-label*="Review" i]',
+            'button[aria-label*="Review your application" i]',
+            'footer button.artdeco-button--primary:has-text("Review")',
+        ]
+    elif "next" in btn_type or "continue" in btn_type:
+        selectors = [
+            'button:has-text("Next")',
+            'button[aria-label*="Continue to next step" i]',
+            'button[aria-label*="Next" i]',
+            'footer button.artdeco-button--primary',
+            'button.artdeco-button--primary:has-text("Next")',
+            'button[data-easy-apply-next-button]',
+        ]
+    elif "done" in btn_type or "not now" in btn_type:
+        selectors = [
+            'button:has-text("Done")',
+            'button[aria-label*="Done" i]',
+            'button:has-text("Not now")',
+        ]
+    else:
+        selectors = [
+            f'button:has-text("{button_type}")',
+            f'button[aria-label*="{button_type}" i]',
+        ]
+
+    for scope in modal_scopes:
+        for sel in selectors:
+            try:
+                loc = page.locator(f"{scope}{sel}").first
+                if int(loc.count()) > 0 and bool(loc.is_visible(timeout=250)):
+                    loc.scroll_into_view_if_needed()
+                    time.sleep(random.uniform(0.1, 0.2))
+                    loc.click(timeout=2500)
+                    return True
+            except Exception:
+                pass
+
+    # 2. Secondary Strategy: Direct DOM JavaScript Event Dispatch strictly inside modal
     dom_clicked = page.evaluate("""(target) => {
         const isSavePrompt = (el) => {
             const txt = (el.innerText || '').toLowerCase();
@@ -1383,9 +1527,10 @@ def click_modal_button(page, button_type: str) -> bool:
             if (dismissBtn) dismissBtn.click();
         }
 
-        const modals = Array.from(document.querySelectorAll('.jobs-easy-apply-modal, dialog[open], .artdeco-modal[role="dialog"], [role="dialog"]'));
+        const modals = Array.from(document.querySelectorAll('.jobs-easy-apply-modal, dialog[open], .artdeco-modal[role="dialog"], [role="dialog"], .artdeco-modal'));
         const modal = modals.find(m => (m.classList.contains('jobs-easy-apply-modal') || m.querySelector('.jobs-easy-apply-modal__content') || m.querySelector('button[aria-label*="Submit" i], button[aria-label*="Next" i], button[aria-label*="Review" i]')) && !isSavePrompt(m)) ||
-                      document.querySelector('.jobs-easy-apply-modal');
+                      document.querySelector('.jobs-easy-apply-modal') ||
+                      document.querySelector('.artdeco-modal[role="dialog"]');
         if (!modal) return false;
 
         // Scroll content container down so footer is fully active
@@ -1443,7 +1588,7 @@ def click_modal_button(page, button_type: str) -> bool:
                 return (txt.includes('next') || txt.includes('continue') || aria.includes('next') || aria.includes('continue') || btn.hasAttribute('data-easy-apply-next-button')) && !aria.includes('dismiss');
             });
             if (b) return fireSafeClick(b);
-            const footerPrimary = modal.querySelector('footer button.artdeco-button--primary, .jobs-easy-apply-modal__footer button.artdeco-button--primary');
+            const footerPrimary = modal.querySelector('footer button.artdeco-button--primary, .jobs-easy-apply-modal__footer button.artdeco-button--primary, button.artdeco-button--primary');
             if (footerPrimary) return fireSafeClick(footerPrimary);
         }
 
@@ -1468,55 +1613,7 @@ def click_modal_button(page, button_type: str) -> bool:
         return false;
     }""", btn_type)
 
-    if dom_clicked:
-        return True
-
-    # 2. Secondary Strategy: Scoped Playwright Locator Click inside .jobs-easy-apply-modal
-    modal_prefixes = (
-        '.jobs-easy-apply-modal ',
-        'div[role="dialog"].jobs-easy-apply-modal ',
-    )
-    selectors = []
-    if "submit" in btn_type:
-        selectors = [
-            'button:has-text("Submit application")',
-            'button[aria-label*="Submit application" i]',
-            'button:has-text("Submit")',
-            'footer button.artdeco-button--primary',
-        ]
-    elif "review" in btn_type:
-        selectors = [
-            'button:has-text("Review")',
-            'button[aria-label*="Review" i]',
-            'footer button.artdeco-button--primary:has-text("Review")',
-        ]
-    elif "next" in btn_type or "continue" in btn_type:
-        selectors = [
-            'button:has-text("Next")',
-            'button[aria-label*="Continue to next step" i]',
-            'button[aria-label*="Next" i]',
-            'button[data-easy-apply-next-button]',
-            'footer button.artdeco-button--primary',
-        ]
-    else:
-        selectors = [
-            f'button:has-text("{button_type}")',
-            f'button[aria-label*="{button_type}" i]',
-        ]
-
-    for prefix in modal_prefixes:
-        for sel in selectors:
-            try:
-                loc = page.locator(f'{prefix}{sel}').first
-                if loc.count() > 0 and loc.is_visible(timeout=300):
-                    loc.scroll_into_view_if_needed()
-                    time.sleep(random.uniform(0.1, 0.2))
-                    loc.click(timeout=2000)
-                    return True
-            except Exception:
-                pass
-
-    return False
+    return bool(dom_clicked)
 
 
 def dismiss_modal_if_open(page):
@@ -1642,7 +1739,23 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
 
     # Strict pre-apply check on job description for experience requirements
     max_exp_ceiling = profile.seniority_ceiling_years if profile.seniority_ceiling_years is not None else 3
-    detail_text = page.evaluate("""() => {
+
+    # 1. Expand the job description if truncated by clicking "Show more" / "See more"
+    try:
+        page.evaluate("""() => {
+            const seeMoreBtns = Array.from(document.querySelectorAll(
+                'button[aria-label*="see more" i], button[aria-label*="show more" i], .jobs-description__footer-button, button.jobs-description__footer-button, footer.jobs-description__footer button, button[data-tracking-control-name*="see_more"], [class*="show-more-less-html__button"]'
+            ));
+            for (const btn of seeMoreBtns) {
+                try { btn.click(); } catch (e) {}
+            }
+        }""")
+    except Exception:
+        pass
+
+    detail_data = page.evaluate("""() => {
+        const titleEl = document.querySelector('.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title, h1');
+        const compEl = document.querySelector('.job-details-jobs-unified-top-card__company-name, .jobs-unified-top-card__company-name, .job-details-jobs-unified-top-card__primary-description a');
         const selectors = [
             '#job-details',
             '.jobs-description__content',
@@ -1652,48 +1765,164 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
             'article.jobs-description__container',
             'div[class*="job-details"]'
         ];
+        let text = '';
         for (const sel of selectors) {
             const el = document.querySelector(sel);
             if (el && el.innerText && el.innerText.trim().length > 30) {
-                return el.innerText.trim();
+                text = el.innerText.trim();
+                break;
             }
         }
-        return '';
+        return {
+            title: titleEl ? titleEl.innerText.trim() : '',
+            company: compEl ? compEl.innerText.trim() : '',
+            description: text
+        };
     }""")
+
+    detail_text = detail_data.get("description") or ""
+    actual_title = (detail_data.get("title") or job_title).strip()
+    actual_company = (detail_data.get("company") or company).strip()
+
+    global _last_skip_reason
+    _last_skip_reason = ""
     if detail_text:
         req_exp = extract_experience_requirement(detail_text[:2000])
         if req_exp is not None and req_exp > max_exp_ceiling:
-            print(f"  ❌ Skipped: {job_title} @ {company} (Job requires {req_exp}+ yrs exp — strictly exceeds {max_exp_ceiling} yrs ceiling)")
+            _last_skip_reason = f"Job requires {req_exp}+ yrs exp (strictly exceeds {max_exp_ceiling} yrs ceiling)"
+            print(f"  ❌ Skipped: {actual_title} @ {actual_company} ({_last_skip_reason})")
             return False
+
+    # Check if this job has already been applied to
+    is_already_applied = page.evaluate("""() => {
+        const bodyText = (document.body.innerText || '').toLowerCase();
+        const appliedBadge = document.querySelector('.jobs-applied-badge, [class*="applied-badge"], .artdeco-inline-feedback--success');
+        return appliedBadge !== null || bodyText.includes('you applied on') || bodyText.includes('application submitted');
+    }""")
+    if is_already_applied:
+        print(f"  ℹ️ Already applied to '{actual_title}' @ '{actual_company}' on LinkedIn")
+        _last_skip_reason = "already applied"
+        return True
+
+    # Check if the job only has external apply (e.g. "Apply", "Apply on company website")
+    is_external_only = page.evaluate("""() => {
+        const easyBtn = Array.from(document.querySelectorAll('button')).find(b => {
+            const t = (b.innerText || '').trim().toLowerCase();
+            const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+            return (t.includes('easy apply') || aria.includes('easy apply')) && !aria.includes('external');
+        });
+        if (easyBtn) return false;
+
+        const extBtn = document.querySelector('.jobs-apply-button') ||
+                       Array.from(document.querySelectorAll('button, a')).find(el => {
+                           const t = (el.innerText || '').trim().toLowerCase();
+                           const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                           return (t === 'apply' || t.includes('apply on') || aria.includes('apply to') || aria.includes('company website')) && !t.includes('easy');
+                       });
+        return extBtn !== null;
+    }""")
+    if is_external_only:
+        _last_skip_reason = "external apply"
+        print(f"  ℹ️ Job '{actual_title}' @ '{actual_company}' is external apply (no Easy Apply button)")
+        return False
 
     # Select targeted resume based on Title, Company, and Job Description
     from common.resume_selector import select_resume
     target_resume, match_reason = select_resume(
-        job_title=job_title,
+        job_title=actual_title,
         job_description=detail_text,
-        company=company,
+        company=actual_company,
         profile=profile
     )
     if target_resume:
-        print(f"  📄 [Resume Selected] {target_resume.name} ({match_reason}) for '{job_title}'")
+        print(f"  📄 [Resume Selected] {target_resume.name} ({match_reason}) for '{actual_title}'")
 
     time.sleep(random.uniform(1.2, 2.2))
-    is_easy_apply_clicked = page.evaluate("""() => {
-        const btn = document.querySelector('.jobs-apply-button') ||
-                    Array.from(document.querySelectorAll('button')).find(b => {
-                        const t = (b.innerText || '').trim();
-                        return t === 'Easy Apply' || t.startsWith('Easy Apply') || (b.getAttribute('aria-label') || '').includes('Easy Apply');
-                    });
-        if (btn) {
-            btn.scrollIntoView();
-            btn.click();
-            return true;
-        }
-        return false;
-    }""")
-    if not is_easy_apply_clicked:
+    easy_apply_clicked = False
+    easy_locators = [
+        page.locator('button:has-text("Easy Apply")'),
+        page.locator('button[aria-label*="Easy Apply" i]'),
+        page.locator('.jobs-apply-button:has-text("Easy Apply")'),
+        page.locator('.jobs-apply-button--top-card button:has-text("Easy Apply")'),
+        page.locator('div[class*="jobs-s-apply"] button:has-text("Easy Apply")'),
+    ]
+    for loc in easy_locators:
+        try:
+            target_el = loc.first
+            if target_el.count() > 0 and target_el.is_visible(timeout=1000):
+                target_el.scroll_into_view_if_needed()
+                time.sleep(random.uniform(0.2, 0.4))
+                target_el.click(timeout=3000)
+                easy_apply_clicked = True
+                break
+        except Exception:
+            pass
+
+    if not easy_apply_clicked:
+        easy_apply_clicked = page.evaluate("""() => {
+            const btns = Array.from(document.querySelectorAll('button, div[role="button"]'));
+            const btn = btns.find(b => {
+                const t = (b.innerText || '').trim().toLowerCase();
+                const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                return (t.includes('easy apply') || aria.includes('easy apply')) && !aria.includes('external');
+            });
+            if (btn) {
+                btn.scrollIntoView({ behavior: 'instant', block: 'center' });
+                const opts = { bubbles: true, cancelable: true, view: window, buttons: 1 };
+                btn.dispatchEvent(new PointerEvent('pointerdown', opts));
+                btn.dispatchEvent(new MouseEvent('mousedown', opts));
+                btn.dispatchEvent(new PointerEvent('pointerup', opts));
+                btn.dispatchEvent(new MouseEvent('mouseup', opts));
+                btn.click();
+                return true;
+            }
+            return false;
+        }""")
+
+    if not easy_apply_clicked:
+        _last_skip_reason = "no Easy Apply button found"
         return False
-    time.sleep(random.uniform(2.0, 3.2))
+
+    # Wait for the modal dialog to actually appear (up to 6s)
+    modal_opened = False
+    for _ in range(12):
+        time.sleep(0.5)
+        modal_opened = page.evaluate("""() => {
+            const isSavePrompt = (el) => {
+                const txt = (el.innerText || '').toLowerCase();
+                return txt.includes('save this application') || txt.includes('save to return');
+            };
+            const modals = Array.from(document.querySelectorAll('.jobs-easy-apply-modal, [role="dialog"], .artdeco-modal, dialog'));
+            const activeModal = modals.find(el => {
+                if (isSavePrompt(el)) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 150 && rect.height > 150 && style.display !== 'none' && style.visibility !== 'hidden';
+            });
+            return activeModal !== undefined;
+        }""")
+        if modal_opened:
+            break
+        try:
+            m_loc = page.locator('.jobs-easy-apply-modal, div[role="dialog"], .artdeco-modal[role="dialog"]').first
+            if int(m_loc.count()) > 0 and bool(m_loc.is_visible(timeout=200)):
+                modal_opened = True
+                break
+        except Exception:
+            pass
+
+    if not modal_opened:
+        is_done = page.evaluate("""() => {
+            const body = (document.body.innerText || '').toLowerCase();
+            return body.includes('application was sent') || body.includes('application sent') || body.includes('successfully applied');
+        }""")
+        if is_done:
+            return True
+        _last_skip_reason = "Easy Apply modal failed to open"
+        dismiss_modal_if_open(page)
+        return False
+
+    time.sleep(random.uniform(1.5, 2.5))
 
     try:
         for step_idx in range(35):  # Generous step cap to support multi-question, multi-page applications
@@ -1706,9 +1935,12 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
 
             state = describe_modal(page)
             if state.get("error"):
-                time.sleep(1.5)
-                handle_unexpected_save_prompt(page)
-                state = describe_modal(page)
+                for _ in range(3):
+                    time.sleep(1.0)
+                    handle_unexpected_save_prompt(page)
+                    state = describe_modal(page)
+                    if not state.get("error"):
+                        break
                 if state.get("error"):
                     # Check if already submitted or post-application confirmation
                     is_confirmed = page.evaluate("""() => {
@@ -1775,6 +2007,7 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
                     }
                 }""")
                 time.sleep(0.5)
+                save_debug_screenshot(page, f"step_{step_idx}_before_submit_{company[:12]}")
 
                 if not click_modal_button(page, "Submit application"):
                     # Secondary fallback click directly via JS
@@ -1804,8 +2037,8 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
                                                bodyText.includes('successfully applied') ||
                                                bodyText.includes('track your application');
                         
-                        const modalClosed = !document.querySelector('.jobs-easy-apply-modal') ||
-                                            (document.querySelector('.jobs-easy-apply-modal')?.offsetParent === null);
+                        const modalEl = document.querySelector('.jobs-easy-apply-modal, .artdeco-modal[role="dialog"]');
+                        const modalClosed = !modalEl || (modalEl.getBoundingClientRect().width === 0 && modalEl.getBoundingClientRect().height === 0) || window.getComputedStyle(modalEl).display === 'none';
                         
                         const appliedBadge = !!document.querySelector('.jobs-applied-badge, [class*="applied-badge"], .artdeco-inline-feedback--success');
                         
@@ -1817,6 +2050,8 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
                     if _is_application_confirmation(confirmation_text):
                         is_confirmed = True
                         break
+
+                save_debug_screenshot(page, f"step_{step_idx}_post_submit_{company[:12]}")
 
                 if not is_confirmed:
                     confirmation_text = page.inner_text("body")
@@ -1835,19 +2070,59 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
             # 3. Check for Review action
             elif any("review" in s for s in all_btn_strs):
                 print(f"  [Step {step_idx + 1}] Clicking 'Review' to proceed to final review step...")
+                save_debug_screenshot(page, f"step_{step_idx}_before_review_{company[:12]}")
                 click_modal_button(page, "Review")
-                time.sleep(random.uniform(1.8, 3.0))
+                time.sleep(random.uniform(2.0, 3.2))
+                save_debug_screenshot(page, f"step_{step_idx}_after_review_{company[:12]}")
 
             # 4. Check for Next action
             elif any("next" in s or "continue" in s for s in all_btn_strs) or any(b.get("isPrimary") for b in buttons):
                 print(f"  [Step {step_idx + 1}] Clicking 'Next' to proceed to next step...")
+                save_debug_screenshot(page, f"step_{step_idx}_before_next_{company[:12]}")
                 click_modal_button(page, "Next")
-                time.sleep(random.uniform(1.8, 3.0))
+                time.sleep(random.uniform(2.0, 3.0))
+                
+                # Check if still showing 'Next' on same step; if so, trigger direct synthetic click punch
+                still_on_next = page.evaluate("""() => {
+                    const modal = document.querySelector('.jobs-easy-apply-modal, [role="dialog"], .artdeco-modal');
+                    if (!modal) return false;
+                    const nextBtn = Array.from(modal.querySelectorAll('button')).find(b => {
+                        const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase();
+                        return (t.includes('next') || t.includes('continue')) && !t.includes('dismiss');
+                    });
+                    return nextBtn !== undefined;
+                }""")
+                if still_on_next:
+                    page.evaluate("""() => {
+                        const modal = document.querySelector('.jobs-easy-apply-modal, [role="dialog"], .artdeco-modal');
+                        if (!modal) return;
+                        const nextBtn = Array.from(modal.querySelectorAll('button')).find(b => {
+                            const t = (b.innerText || b.getAttribute('aria-label') || '').toLowerCase();
+                            return (t.includes('next') || t.includes('continue')) && !t.includes('dismiss');
+                        }) || modal.querySelector('footer button.artdeco-button--primary, button.artdeco-button--primary');
+                        if (nextBtn) {
+                            nextBtn.disabled = false;
+                            nextBtn.removeAttribute('disabled');
+                            nextBtn.removeAttribute('aria-disabled');
+                            nextBtn.scrollIntoView({ behavior: 'instant', block: 'center' });
+                            nextBtn.focus();
+                            const opts = { bubbles: true, cancelable: true, view: window, buttons: 1 };
+                            nextBtn.dispatchEvent(new PointerEvent('pointerdown', opts));
+                            nextBtn.dispatchEvent(new MouseEvent('mousedown', opts));
+                            nextBtn.dispatchEvent(new PointerEvent('pointerup', opts));
+                            nextBtn.dispatchEvent(new MouseEvent('mouseup', opts));
+                            nextBtn.click();
+                        }
+                    }""")
+                    time.sleep(random.uniform(1.8, 2.5))
+                save_debug_screenshot(page, f"step_{step_idx}_after_next_{company[:12]}")
             else:
                 # Primary button fallback in footer
+                save_debug_screenshot(page, f"step_{step_idx}_before_fallback_{company[:12]}")
                 if not click_modal_button(page, "Next"):
                     raise RuntimeError(f"unrecognized modal state, buttons={all_btn_strs}")
-                time.sleep(random.uniform(1.8, 3.0))
+                time.sleep(random.uniform(2.0, 3.0))
+                save_debug_screenshot(page, f"step_{step_idx}_after_fallback_{company[:12]}")
 
             # Re-check for validation errors and heal if necessary
             has_error = page.evaluate("""() => {
@@ -2058,7 +2333,7 @@ def run(limit: int | None = None):
     max_search_pages = int(profile.data.get("max_linkedin_pages", 3))
 
     search_targets = [
-        {"role": "Personalized Preferences Feed", "loc": "Worldwide", "url": "https://www.linkedin.com/jobs/search-results/?f_AL=true&f_EA=true&f_TPR=r86400&f_WT=2%2C3", "is_pref": True}
+        {"role": "Personalized Preferences Feed", "loc": "Worldwide", "url": "https://www.linkedin.com/jobs/search/?f_AL=true&f_EA=true&f_TPR=r86400&f_WT=2%2C3", "is_pref": True}
     ]
     for role in profile.target_roles:
         for loc in locations:
@@ -2099,7 +2374,7 @@ def run(limit: int | None = None):
             print(f"\n--- Searching LinkedIn: {role} ({loc}){page_label} ---")
             try:
                 page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_selector('.job-card-container, [data-job-id], .jobs-search-results-list, .scaffold-layout__list, button[aria-label^="Dismiss "]', timeout=12000)
+                page.wait_for_selector('.job-card-container, [data-job-id], .jobs-search-results-list, .scaffold-layout__list, button[aria-label^="Dismiss "], ul.scaffold-layout__list-container', timeout=12000)
             except PWTimeout:
                 pass
             except Exception as e:
@@ -2132,108 +2407,176 @@ def run(limit: int | None = None):
                         const cards = [];
                         const seen = new Set();
 
-                    // 1. Classic layout items
-                    const items = Array.from(document.querySelectorAll('li[data-occludable-job-id], .job-card-container, .jobs-search-results__list-item, .scaffold-layout__list-item, .jobs-search-results-list li, [data-job-id]'));
-                    if (items.length > 0) {
-                        items.forEach((c, idx) => {
-                            const titleEl = c.querySelector('a.job-card-list__title--link, [class*="job-card-list__title"], a.job-card-container__link, .job-card-list__title, a[data-control-id], strong, a[href*="/jobs/view/"]');
-                            let title = titleEl ? titleEl.innerText.trim() : "";
-                            if (!title && titleEl && titleEl.getAttribute("aria-label")) {
-                                title = titleEl.getAttribute("aria-label").trim();
-                            }
-                            const href = titleEl ? titleEl.href : "";
-                            const compEl = c.querySelector('.artdeco-entity-lockup__subtitle, [class*="company-name"], [class*="primary-description"], .job-card-container__primary-description');
-                            const timeEl = c.querySelector('time, [class*="listed-time"], [class*="footer-item"]');
-                            const locEl = c.querySelector('.job-card-container__metadata-item, [class*="job-card-container__metadata-wrapper"] li, .artdeco-entity-lockup__caption, [class*="job-search-card__location"], [class*="location"]');
-                            const appEl = c.querySelector('.job-card-container__applicant-count, [class*="applicant-count"], .job-card-list__footer-wrapper, [class*="tvm__text"]');
-                            const key = (title + " " + (compEl ? compEl.innerText.trim() : "")).toLowerCase();
-                            if (title && !seen.has(key)) {
-                                seen.add(key);
-                                cards.push({
-                                    idx: idx,
-                                    title: title,
-                                    href: href,
-                                    company: compEl ? compEl.innerText.trim() : "",
-                                    posted: timeEl ? timeEl.innerText.trim() : "",
-                                    location: locEl ? locEl.innerText.trim() : "",
-                                    applicants: appEl ? appEl.innerText.trim() : "",
-                                    isAiLayout: false,
-                                });
-                            }
-                        });
-                    }
+                        // 1. Classic layout items (query discrete list elements to avoid duplicate parent/child matches)
+                        const listItems = Array.from(document.querySelectorAll(
+                            'ul.scaffold-layout__list-container > li, ' +
+                            '.jobs-search-results-list li, ' +
+                            'li[data-occludable-job-id], ' +
+                            'li.jobs-search-results__list-item'
+                        ));
+                        const candidateElements = listItems.length > 0 ? listItems : Array.from(document.querySelectorAll('.job-card-container, [data-job-id]'));
+                        
+                        if (candidateElements.length > 0) {
+                            candidateElements.forEach((c, idx) => {
+                                let jobId = c.getAttribute('data-occludable-job-id') || c.getAttribute('data-job-id') || '';
 
-                    // 2. AI-powered search results layout (uses dismiss buttons & card containers)
-                    if (cards.length === 0) {
-                        const dismissBtns = Array.from(document.querySelectorAll('button[aria-label^="Dismiss "]'));
-                        dismissBtns.forEach((btn, idx) => {
-                            const container = btn.closest('div.auymuo, div[class*="auymuo"], li') || btn.parentElement?.parentElement?.parentElement;
-                            const textLines = (container ? container.innerText : "").split('\\n').map(s => s.trim()).filter(Boolean);
-                            const titleMatch = (btn.getAttribute('aria-label') || '').match(/^Dismiss (.*?) job$/);
-                            const title = titleMatch ? titleMatch[1] : (textLines[0] || "");
-                            
-                            let company = "";
-                            let location = "";
-                            let posted = "";
-                            let applicants = "";
-                            
-                            for (let i = 1; i < textLines.length; i++) {
-                                const line = textLines[i];
-                                if (!company && !line.includes('ago') && !line.includes('applicant') && !line.includes('alumni') && !line.includes('Remote') && !line.includes('Hybrid') && !line.includes('On-site')) {
-                                    company = line;
-                                } else if (!location && (line.includes('Remote') || line.includes('Hybrid') || line.includes('On-site') || line.includes(',') || line.includes('United') || line.includes('India') || line.includes('Zealand') || line.includes('Kingdom'))) {
-                                    location = line;
-                                } else if (line.includes('ago') || line.includes('hour') || line.includes('day') || line.includes('week') || line.includes('month')) {
-                                    posted = line;
-                                } else if (line.includes('applicant') || line.includes('early')) {
-                                    applicants = line;
+                                const titleEl = c.querySelector('a.job-card-list__title--link, [class*="job-card-list__title"], a.job-card-container__link, .job-card-list__title, a[data-control-id], strong, a[href*="/jobs/view/"]');
+                                let title = titleEl ? titleEl.innerText.trim() : "";
+                                if (!title && titleEl && titleEl.getAttribute("aria-label")) {
+                                    title = titleEl.getAttribute("aria-label").trim();
                                 }
-                            }
-                            
-                            const key = (title + " " + company).toLowerCase();
-                            if (title && !seen.has(key)) {
-                                seen.add(key);
-                                cards.push({
-                                    idx: idx,
-                                    title: title,
-                                    href: "",
-                                    company: company,
-                                    posted: posted,
-                                    location: location,
-                                    applicants: applicants,
-                                    isAiLayout: true,
-                                });
-                            }
-                        });
-                    }
+                                if (title.includes('\\n')) {
+                                    title = title.split('\\n')[0].trim();
+                                }
 
-                    // 3. Fallback anchors scan
-                    if (cards.length === 0) {
-                        const container = document.querySelector('.jobs-search-results-list, .scaffold-layout__list, div.jobs-search__results-list, main');
-                        const anchors = container ? Array.from(container.querySelectorAll('a[href*="/jobs/view/"]')) : [];
-                        anchors.forEach((a, idx) => {
-                            const title = a.innerText.trim();
-                            const href = a.href;
-                            const key = (title + " " + href).toLowerCase();
-                            if (!title || seen.has(key)) return;
-                            seen.add(key);
-                            const parent = a.closest('li, [class*="card"], div.flex-grow-1, [data-job-id]') || a.parentElement;
-                            const compEl = parent ? parent.querySelector('[class*="company"], [class*="subtitle"], [class*="primary-description"]') : null;
-                            const timeEl = parent ? parent.querySelector('time, [class*="time"], [class*="footer"]') : null;
-                            const locEl = parent ? parent.querySelector('.job-card-container__metadata-item, [class*="job-card-container__metadata-wrapper"] li, .artdeco-entity-lockup__caption, [class*="location"]') : null;
-                            const appEl = parent ? parent.querySelector('.job-card-container__applicant-count, [class*="applicant-count"], [class*="footer-item"]') : null;
-                            cards.push({
-                                idx: idx,
-                                title: title,
-                                href: href,
-                                company: compEl ? compEl.innerText.trim() : "",
-                                posted: timeEl ? timeEl.innerText.trim() : "",
-                                location: locEl ? locEl.innerText.trim() : "",
-                                applicants: appEl ? appEl.innerText.trim() : "",
-                                isAiLayout: false,
+                                let href = titleEl ? titleEl.href : "";
+                                if (!jobId && href) {
+                                    const m = href.match(/\\/jobs\\/view\\/(\\d+)/);
+                                    if (m) jobId = m[1];
+                                }
+                                if (!href && jobId) {
+                                    href = `https://www.linkedin.com/jobs/view/${jobId}/`;
+                                }
+
+                                const compEl = c.querySelector('a[href*="/company/"], .artdeco-entity-lockup__subtitle, [class*="company-name"], [class*="primary-description"], .job-card-container__primary-description');
+                                let company = compEl ? compEl.innerText.trim() : "";
+                                if (company.includes('\\n')) {
+                                    company = company.split('\\n')[0].trim();
+                                }
+
+                                const timeEl = c.querySelector('time, [class*="listed-time"], [class*="footer-item"]');
+                                const locEl = c.querySelector('.job-card-container__metadata-item, [class*="job-card-container__metadata-wrapper"] li, .artdeco-entity-lockup__caption, [class*="job-search-card__location"], [class*="location"]');
+                                const appEl = c.querySelector('.job-card-container__applicant-count, [class*="applicant-count"], .job-card-list__footer-wrapper, [class*="tvm__text"]');
+
+                                const cardRawText = (c.innerText || '').toLowerCase();
+                                const isEasyApply = cardRawText.includes('easy apply') || c.querySelector('[class*="apply-method"], [data-test-icon*="linkedin"]') !== null;
+
+                                const key = (title + " " + company).toLowerCase();
+                                if (title && !seen.has(key)) {
+                                    seen.add(key);
+                                    cards.push({
+                                        idx: idx,
+                                        job_id: jobId,
+                                        title: title,
+                                        href: href,
+                                        company: company,
+                                        posted: timeEl ? timeEl.innerText.trim() : "",
+                                        location: locEl ? locEl.innerText.trim() : "",
+                                        applicants: appEl ? appEl.innerText.trim() : "",
+                                        isAiLayout: false,
+                                        is_easy_apply: isEasyApply,
+                                    });
+                                }
                             });
-                        });
-                    }
+                        }
+
+                        // 2. AI-powered search results layout (uses dismiss buttons & card containers)
+                        if (cards.length === 0) {
+                            const dismissBtns = Array.from(document.querySelectorAll('button[aria-label^="Dismiss "]'));
+                            dismissBtns.forEach((btn, idx) => {
+                                const container = btn.closest('div.auymuo, div[class*="auymuo"], li') || btn.parentElement?.parentElement?.parentElement;
+                                if (!container) return;
+                                const textLines = (container.innerText || "").split('\\n').map(s => s.trim()).filter(Boolean);
+                                const titleMatch = (btn.getAttribute('aria-label') || '').match(/^Dismiss (.*?) job$/i);
+                                let title = titleMatch ? titleMatch[1].trim() : (textLines[0] || "");
+                                if (title.includes('\\n')) title = title.split('\\n')[0].trim();
+                                
+                                let company = "";
+                                const compEl = container.querySelector('a[href*="/company/"], [class*="company"], [class*="subtitle"], [class*="primary-description"]');
+                                if (compEl) {
+                                    company = compEl.innerText.trim().split('\\n')[0].trim();
+                                }
+                                
+                                let location = "";
+                                let posted = "";
+                                let applicants = "";
+                                
+                                for (let i = 0; i < textLines.length; i++) {
+                                    const line = textLines[i];
+                                    if (!company && line.toLowerCase() !== title.toLowerCase() && !line.includes('ago') && !line.includes('applicant') && !line.includes('alumni') && !line.includes('Remote') && !line.includes('Hybrid') && !line.includes('On-site')) {
+                                        company = line;
+                                    } else if (!location && (line.includes('Remote') || line.includes('Hybrid') || line.includes('On-site') || line.includes(',') || line.includes('United') || line.includes('India') || line.includes('Zealand') || line.includes('Kingdom'))) {
+                                        location = line;
+                                    } else if (line.includes('ago') || line.includes('hour') || line.includes('day') || line.includes('week') || line.includes('month')) {
+                                        posted = line;
+                                    } else if (line.includes('applicant') || line.includes('early')) {
+                                        applicants = line;
+                                    }
+                                }
+
+                                let href = "";
+                                let jobId = "";
+                                const linkEl = container.querySelector('a[href*="/jobs/view/"], a[data-control-id], a');
+                                if (linkEl && linkEl.href && linkEl.href.includes('/jobs/view/')) {
+                                    href = linkEl.href;
+                                    const m = href.match(/\\/jobs\\/view\\/(\\d+)/);
+                                    if (m) jobId = m[1];
+                                }
+                                if (!href && jobId) {
+                                    href = `https://www.linkedin.com/jobs/view/${jobId}/`;
+                                }
+
+                                const isEasyApply = (container.innerText || '').toLowerCase().includes('easy apply');
+                                
+                                const key = (title + " " + company).toLowerCase();
+                                if (title && !seen.has(key)) {
+                                    seen.add(key);
+                                    cards.push({
+                                        idx: idx,
+                                        job_id: jobId,
+                                        title: title,
+                                        href: href,
+                                        company: company,
+                                        posted: posted,
+                                        location: location,
+                                        applicants: applicants,
+                                        isAiLayout: true,
+                                        is_easy_apply: isEasyApply,
+                                    });
+                                }
+                            });
+                        }
+
+                        // 3. Fallback anchors scan
+                        if (cards.length === 0) {
+                            const container = document.querySelector('.jobs-search-results-list, .scaffold-layout__list, div.jobs-search__results-list, main');
+                            const anchors = container ? Array.from(container.querySelectorAll('a[href*="/jobs/view/"]')) : [];
+                            anchors.forEach((a, idx) => {
+                                let title = a.innerText.trim();
+                                if (title.includes('\\n')) title = title.split('\\n')[0].trim();
+                                const href = a.href;
+                                let jobId = '';
+                                const m = href.match(/\\/jobs\\/view\\/(\\d+)/);
+                                if (m) jobId = m[1];
+
+                                const parent = a.closest('li, [class*="card"], div.flex-grow-1, [data-job-id]') || a.parentElement;
+                                const compEl = parent ? parent.querySelector('a[href*="/company/"], [class*="company"], [class*="subtitle"], [class*="primary-description"]') : null;
+                                let company = compEl ? compEl.innerText.trim() : "";
+                                if (company.includes('\\n')) company = company.split('\\n')[0].trim();
+
+                                const timeEl = parent ? parent.querySelector('time, [class*="time"], [class*="footer"]') : null;
+                                const locEl = parent ? parent.querySelector('.job-card-container__metadata-item, [class*="job-card-container__metadata-wrapper"] li, .artdeco-entity-lockup__caption, [class*="location"]') : null;
+                                const appEl = parent ? parent.querySelector('.job-card-container__applicant-count, [class*="applicant-count"], [class*="footer-item"]') : null;
+                                const isEasyApply = parent ? (parent.innerText || '').toLowerCase().includes('easy apply') : false;
+
+                                const key = (title + " " + company).toLowerCase();
+                                if (title && !seen.has(key)) {
+                                    seen.add(key);
+                                    cards.push({
+                                        idx: idx,
+                                        job_id: jobId,
+                                        title: title,
+                                        href: href,
+                                        company: company,
+                                        posted: timeEl ? timeEl.innerText.trim() : "",
+                                        location: locEl ? locEl.innerText.trim() : "",
+                                        applicants: appEl ? appEl.innerText.trim() : "",
+                                        isAiLayout: false,
+                                        is_easy_apply: isEasyApply,
+                                    });
+                                }
+                            });
+                        }
                         return cards;
                     }
                 """)
@@ -2339,41 +2682,86 @@ def run(limit: int | None = None):
                     # Natural human delay before opening job card
                     time.sleep(random.uniform(2.2, 4.0))
 
+                    job_id = card.get("job_id", "")
                     card_clicked = False
-                    if card.get("isAiLayout"):
+                    
+                    # Strategy 1: Target specifically by job_id if known
+                    if job_id:
+                        id_loc = page.locator(
+                            f'li[data-occludable-job-id="{job_id}"], '
+                            f'[data-job-id="{job_id}"], '
+                            f'a[href*="/jobs/view/{job_id}"]'
+                        ).first
+                        if id_loc.count() > 0 and id_loc.is_visible():
+                            try:
+                                id_loc.scroll_into_view_if_needed()
+                                time.sleep(random.uniform(0.3, 0.6))
+                                id_loc.click()
+                                card_clicked = True
+                            except Exception:
+                                pass
+
+                    # Strategy 2: AI layout container click
+                    if not card_clicked and card.get("isAiLayout"):
                         dismiss_btns = page.locator('button[aria-label^="Dismiss "]')
                         if dismiss_btns.count() > idx:
                             try:
                                 btn = dismiss_btns.nth(idx)
                                 card_container = btn.locator('xpath=ancestor::div[contains(@class, "auymuo")][1]')
-                                if card_container.count() > 0:
+                                if card_container.count() > 0 and card_container.is_visible():
                                     card_container.scroll_into_view_if_needed()
                                     time.sleep(random.uniform(0.3, 0.6))
                                     card_container.click()
+                                    card_clicked = True
                                 else:
                                     btn.locator('..').click()
-                                card_clicked = True
-                                time.sleep(random.uniform(2.0, 3.2))
-                            except Exception:
-                                pass
-                    else:
-                        card_locator = page.locator(".jobs-search-results__list-item, .scaffold-layout__list-item, .jobs-search-results-list li, .scaffold-layout__list li, div[class*='job']").nth(idx)
-                        if card_locator.count() > 0 and card_locator.is_visible():
-                            try:
-                                card_locator.scroll_into_view_if_needed()
-                                time.sleep(random.uniform(0.3, 0.6))
-                                card_locator.click()
-                                card_clicked = True
-                                time.sleep(random.uniform(2.0, 3.2))
+                                    card_clicked = True
                             except Exception:
                                 pass
 
-                    if not card_clicked and card.get("href"):
+                    # Strategy 3: Classic list item click (strictly target list items, never generic divs)
+                    if not card_clicked:
+                        classic_loc = page.locator(
+                            "ul.scaffold-layout__list-container > li, "
+                            ".jobs-search-results-list li, "
+                            "li.jobs-search-results__list-item, "
+                            "div.job-card-container"
+                        ).nth(idx)
+                        if classic_loc.count() > 0 and classic_loc.is_visible():
+                            try:
+                                classic_loc.scroll_into_view_if_needed()
+                                time.sleep(random.uniform(0.3, 0.6))
+                                classic_loc.click()
+                                card_clicked = True
+                            except Exception:
+                                pass
+
+                    # Wait for job detail panel to load or verify selection
+                    detail_loaded = False
+                    if card_clicked:
+                        try:
+                            page.wait_for_selector(
+                                '#job-details, .jobs-description, .jobs-box__html-content, .jobs-apply-button, button:has-text("Easy Apply")',
+                                timeout=4000
+                            )
+                            detail_loaded = True
+                        except Exception:
+                            pass
+
+                    # Strategy 4: Direct navigation fallback if click failed or details pane didn't load
+                    if (not detail_loaded or not card_clicked) and card.get("href"):
                         try:
                             page.goto(card["href"], wait_until="domcontentloaded", timeout=25000)
+                            page.wait_for_selector(
+                                '#job-details, .jobs-description, .jobs-box__html-content, .jobs-apply-button, button:has-text("Easy Apply")',
+                                timeout=6000
+                            )
                         except PWTimeout:
                             pass
-                        time.sleep(random.uniform(2.5, 4.0))
+                        except Exception:
+                            pass
+
+                    time.sleep(random.uniform(1.8, 3.0))
 
                     success = run_one_application(page, profile, card.get("title", ""), card.get("company", ""))
                     if success:
@@ -2394,13 +2782,17 @@ def run(limit: int | None = None):
 
                         wait_before_next_application(profile)
                     else:
+                        skip_reason = _last_skip_reason or "no Easy Apply button or ineligible"
                         log_row([datetime.now(), "linkedin", card.get("title"),
-                                  card.get("company"), "skipped", "no Easy Apply button or ineligible"])
-                        from common.external_tracker import log_external_job
-                        job_link = page.url
-                        ext_link = page.evaluate("() => document.querySelector('.jobs-apply-button')?.href || ''")
-                        log_external_job("linkedin", card.get("title") or "", card.get("company") or "", job_link or "", ext_link or "", loc, "", card.get("posted") or "")
-                        print(f"Skipped (External Apply logged to CSV): {card.get('title')} @ {card.get('company')}")
+                                  card.get("company"), "skipped", skip_reason])
+                        if "external" in skip_reason.lower() or not card.get("is_easy_apply", True):
+                            from common.external_tracker import log_external_job
+                            job_link = card.get("href") or page.url
+                            ext_link = page.evaluate("() => document.querySelector('.jobs-apply-button')?.href || ''")
+                            log_external_job("linkedin", card.get("title") or "", card.get("company") or "", job_link or "", ext_link or "", loc, "", card.get("posted") or "")
+                            print(f"Skipped (External Apply logged to CSV): {card.get('title')} @ {card.get('company')}")
+                        else:
+                            print(f"Skipped: {card.get('title')} @ {card.get('company')} ({skip_reason})")
 
                         # Outreach to hiring manager even for external/non-Easy Apply if enabled
                         if profile.data.get("connect_with_hiring_manager", True):

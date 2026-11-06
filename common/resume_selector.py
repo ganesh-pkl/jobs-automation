@@ -203,8 +203,13 @@ def select_resume(
     comp_clean = (company or "").strip()
     full_context = f"{title_clean} {jd_clean}".strip()
 
-    # Dynamic On-The-Fly ATS Resume Generation (if company/JD is provided)
-    if generate_dynamic and (comp_clean or (profile and getattr(profile, "data", {}).get("generate_dynamic_resumes") is True)):
+    # Dynamic On-The-Fly ATS Resume Generation (if company is provided or dynamic generation is configured)
+    should_gen_dynamic = generate_dynamic and (bool(comp_clean) or (profile and getattr(profile, "data", {}).get("generate_dynamic_resumes") is True))
+    if profile is not None and hasattr(profile, "data") and isinstance(profile.data, dict):
+        if profile.data.get("generate_dynamic_resumes") is False:
+            should_gen_dynamic = False
+
+    if should_gen_dynamic:
         try:
             from common.resume_generator import generate_targeted_resume
             dyn_path, dyn_reason = generate_targeted_resume(

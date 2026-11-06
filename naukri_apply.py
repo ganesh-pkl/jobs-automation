@@ -728,10 +728,10 @@ def _click_skip_question(page) -> bool:
     """, default=False))
 
 
-def _resume_path(profile: Profile, job_context: str = "") -> Path | None:
+def _resume_path(profile: Profile, job_context: str = "", job_description: str = "") -> Path | None:
     """Resolve the private resume configured or targeted for the job role."""
     from common.resume_selector import get_resume_path
-    path = get_resume_path(profile, job_context=job_context)
+    path = get_resume_path(profile, job_context=job_context, job_description=job_description)
     if path and path.is_file():
         return path
     configured = str(profile.data.get("resume_file_name", "")).strip()
@@ -743,13 +743,13 @@ def _resume_path(profile: Profile, job_context: str = "") -> Path | None:
     return p if p.is_file() else None
 
 
-def _upload_resume(page, profile: Profile, question: str, job_context: str = "") -> bool:
+def _upload_resume(page, profile: Profile, question: str, job_context: str = "", job_description: str = "") -> bool:
     """Upload the configured or role-targeted resume when Naukri Campus requires it."""
     lower_q = question.lower()
     if "upload" not in lower_q or "resume" not in lower_q:
         return False
 
-    resume_path = _resume_path(profile, job_context=job_context)
+    resume_path = _resume_path(profile, job_context=job_context, job_description=job_description)
     if resume_path is None:
         raise SkipJob(
             "Naukri requested a resume upload, but no matching resume could be resolved."
@@ -1242,7 +1242,7 @@ def _handle_dob_question(page, question: str, profile: Profile) -> bool:
     return True
 
 
-def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: int):
+def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: int, job_description: str = ""):
     """Handles Naukri's post-apply screening chat drawer, if it appears."""
     answers = profile.answer_library()
     try:
@@ -1325,7 +1325,7 @@ def answer_screening_chat(page, profile: Profile, job_context: str, timeout_s: i
 
         last_question = question
 
-        if _upload_resume(page, profile, question, job_context=job_context):
+        if _upload_resume(page, profile, question, job_context=job_context, job_description=job_description):
             continue
 
         if _handle_dob_question(page, question, profile):
@@ -1561,8 +1561,9 @@ def run(preview: bool = False, limit: int | None = None):
                         attempted += 1
                         time.sleep(2)
 
+                        jd_desc = safe_evaluate(page, "() => document.querySelector('.styles_job-desc-container__txpYf, .job-desc, .dang-inner-html, section.job-desc')?.innerText || ''", default="")
                         answer_screening_chat(page, profile, f"{card.get('title')} at {card.get('company')}",
-                                               human_timeout)
+                                               human_timeout, job_description=jd_desc)
                         time.sleep(1.5)
 
                         if verify_applied(page):

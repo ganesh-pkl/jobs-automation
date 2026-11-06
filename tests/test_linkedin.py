@@ -11,7 +11,10 @@ class LinkedInEngineTests(unittest.TestCase):
         self.assertEqual(linkedin_apply.extract_experience_requirement("Requires 3+ years of experience"), 3)
         self.assertEqual(linkedin_apply.extract_experience_requirement("2-4 years experience in Python"), 2)
         self.assertEqual(linkedin_apply.extract_experience_requirement("Minimum 5 years of software engineering"), 5)
+        self.assertEqual(linkedin_apply.extract_experience_requirement("3+ years with React and Node.js"), 3)
         self.assertIsNone(linkedin_apply.extract_experience_requirement("Great company culture"))
+        self.assertIsNone(linkedin_apply.extract_experience_requirement("For over 20+ years, ACME Corp has been a global leader in software"))
+        self.assertIsNone(linkedin_apply.extract_experience_requirement("In business for 15 years delivering enterprise solutions"))
 
     def test_job_key_normalization(self):
         self.assertEqual(

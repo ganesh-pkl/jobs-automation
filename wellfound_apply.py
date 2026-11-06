@@ -365,14 +365,14 @@ def fill_pitch_note(container, title: str, company: str, profile: Profile) -> bo
     return False
 
 
-def fill_additional_screening_questions(container, profile: Profile, job_context: str = ""):
+def fill_additional_screening_questions(container, profile: Profile, job_context: str = "", job_description: str = ""):
     """Fills any additional custom screening inputs and uploads role-targeted resume if requested."""
     try:
         # Check for file / resume upload inputs
         file_inputs = container.locator("input[type='file'], input[name*='resume' i], input[name*='cv' i]").all()
         if file_inputs:
             from common.resume_selector import get_resume_path
-            resume_path = get_resume_path(profile, job_context=job_context)
+            resume_path = get_resume_path(profile, job_context=job_context, job_description=job_description)
             if resume_path and resume_path.is_file():
                 for fi in file_inputs:
                     try:
@@ -712,7 +712,11 @@ def run(role: str | None = None, limit: int | None = None, dry_run: bool = False
                 fill_pitch_note(modal, title, company, profile)
 
                 # Fill any additional custom screening questions
-                fill_additional_screening_questions(modal, profile, job_context=f"{title} at {company}")
+                try:
+                    wf_jd = page.locator("[class*='styles_description'], [data-test='JobDescription'], div[class*='jobDescription']").first.inner_text(timeout=1000)
+                except Exception:
+                    wf_jd = ""
+                fill_additional_screening_questions(modal, profile, job_context=f"{title} at {company}", job_description=wf_jd)
 
                 # Submit Application
                 print(f"    Clicking '{btn_text}'...")
