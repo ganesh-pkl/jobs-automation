@@ -236,6 +236,14 @@ def select_resume(
     # 2. Phase 1: High-Confidence Title Matching
     # If the job title specifically mentions a specialized stack, title takes precedence!
     if title_clean:
+        # Check AI Java Full Stack in title (both AI and Java signals present)
+        is_ai_title = bool(re.search(r"\b(ai|genai|generative\s+ai|llm|llms|rag|spring\s*ai|langchain|langgraph)\b", title_clean, re.IGNORECASE))
+        is_java_title = bool(re.search(r"\b(java|spring\s*boot|spring)\b", title_clean, re.IGNORECASE) and not re.search(r"\bjavascript\b", title_clean, re.IGNORECASE))
+        if is_ai_title and is_java_title:
+            path = resolve_file_on_disk("Ganesh_Pirikirala_AI_Java_FullStack_Resume_1Page.pdf") or resolve_file_on_disk("Ganesh_Pirikirala_AI_Java_FullStack_Resume.pdf")
+            if path:
+                return path, "Title matched AI Java Full Stack (AI + Java)"
+
         # Check AI Full Stack in title
         defn_ai_fs = RESUME_DEFINITIONS[0]
         dual = defn_ai_fs.get("dual_check")

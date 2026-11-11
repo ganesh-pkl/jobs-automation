@@ -91,6 +91,9 @@ def main(argv=None):
     commands.add_parser("preview", help="Read job search results without clicking Apply or writing application logs")
     apply = commands.add_parser("apply", help="Submit real applications within profile limits")
     apply.add_argument("--confirm", action="store_true", help="Confirm this run may submit real applications")
+    dash = commands.add_parser("dashboard", help="Generate and view application analytics dashboard")
+    dash.add_argument("--no-open", action="store_true", help="Do not automatically open in web browser")
+    dash.add_argument("--serve", "-s", action="store_true", help="Start local HTTP server")
     args = parser.parse_args(argv)
     os.chdir(ROOT)
     if sys.version_info < (3, 10):
@@ -100,6 +103,17 @@ def main(argv=None):
         return 0
     if args.command == "doctor":
         return doctor(args.browser_smoke)
+    if args.command == "dashboard":
+        import dashboard
+        output_path, _ = dashboard.build_and_save_dashboard()
+        if not args.no_open and not args.serve:
+            import webbrowser
+            print(f"Opening dashboard in browser: {output_path.resolve()}")
+            webbrowser.open(f"file://{output_path.resolve()}")
+        if args.serve:
+            sys.argv = ["dashboard.py", "--serve"]
+            dashboard.main()
+        return 0
     if args.command == "apply" and not args.confirm:
         parser.error("Real submissions require: python naukri.py apply --confirm")
     if args.command == "login":

@@ -64,6 +64,10 @@ AUTHENTIC_SKILLS_CATALOG = {
     "system_design": ("System Design (LLD/HLD)", r"\b(system\s+design|lld|hld|low[\s-]level\s+design|high[\s-]level\s+design)\b"),
     "solid": ("SOLID Principles", r"\b(solid|clean\s+architecture|design\s+patterns)\b"),
     "postman": ("Postman", r"\b(postman|swagger|api\s+docs)\b"),
+    "kotlin": ("Kotlin", r"\b(kotlin)\b"),
+    "jetpack_compose": ("Jetpack Compose", r"\b(jetpack\s+compose|compose)\b"),
+    "android": ("Android SDK", r"\b(android|android\s+sdk|mobile\s+app(?:lication)?s?)\b"),
+    "room_db": ("Room Database", r"\b(room\s*(?:db|database)?|sqlite)\b"),
 }
 
 # Project scoring keyword rules for project reordering
@@ -108,6 +112,23 @@ PROJECT_KEYWORDS = {
     "E-Commerce Store --- Full-Stack MERN": [
         "mern", "mern stack", "react", "mongodb", "express", "node", "razorpay"
     ],
+    "FocusLock": [
+        "focuslock", "focus-lock", "android", "kotlin", "jetpack compose", "compose",
+        "accessibility", "accessibilityservice", "room", "sqlite", "usagestatsmanager",
+        "screen time", "productivity", "offline-first", "mobile", "stateflow",
+        "coroutines", "material 3", "mvvm"
+    ],
+}
+
+# Standalone project LaTeX blocks available for dynamic substitution
+PROJECT_LATEX_TEMPLATES = {
+    "FocusLock": (
+        r"\noindent \textbf{FocusLock --- Anti-Distraction Screen Time Blocker (Android)} \hfill \href{https://github.com/webdeveloper-fresher32/Focus-Lock}{\raisebox{-0.05\height}\faGithub\ Code}" "\n"
+        r"\begin{itemize}" "\n"
+        r"    \item Engineered an offline-first Android productivity application in \textbf{Kotlin, Jetpack Compose (Material 3), and Clean Architecture/MVVM}, actively intercepting unauthorized app launches via an Android \textbf{AccessibilityService} and full-screen blocking overlay." "\n"
+        r"    \item Implemented persistent target-epoch session timers and deflection analytics backed by \textbf{Room SQLite} and \textbf{UsageStatsManager}, surviving process termination, aggressive OS background killers, and device reboots (\textbf{BOOT\_COMPLETED})." "\n"
+        r"\end{itemize}"
+    )
 }
 
 
@@ -222,6 +243,21 @@ def tailor_technical_skills(tex_content: str, matched_skills: List[Tuple[str, st
             else:
                 regular.append(skill)
 
+        # Inject matching authentic skills that belong to this category if detected in JD
+        cat_lower = cat_prefix.lower()
+        if "frontend" in cat_lower or "mobile" in cat_lower or "ui" in cat_lower:
+            for key, display_name in [("jetpack_compose", "Jetpack Compose"), ("android", "Android SDK")]:
+                if any(m[0] == key for m in matched_skills) and not any(display_name.lower() in s.lower() for s in raw_skills):
+                    prioritized.append(display_name)
+        elif "backend" in cat_lower or "languages" in cat_lower or "programming" in cat_lower:
+            for key, display_name in [("kotlin", "Kotlin")]:
+                if any(m[0] == key for m in matched_skills) and not any(display_name.lower() in s.lower() for s in raw_skills):
+                    prioritized.append(display_name)
+        elif "database" in cat_lower:
+            for key, display_name in [("room_db", "Room Database (SQLite)")]:
+                if any(m[0] == key for m in matched_skills) and not any("room" in s.lower() or "sqlite" in s.lower() for s in raw_skills):
+                    prioritized.append(display_name)
+
         # Front-load matching skills, followed by the rest
         reordered_skills = prioritized + regular
         new_row_content = ", ".join(reordered_skills)
@@ -279,6 +315,27 @@ def reorder_projects_in_latex(tex_content: str, jd_text: str) -> str:
                 score += 1
         scored.append((score, chunk_clean))
 
+    # Dynamic Project Injection: If FocusLock matches keywords in JD and isn't already present,
+    # swap it with the lowest scoring chunk if FocusLock score > lowest chunk score
+    if "FocusLock" in PROJECT_LATEX_TEMPLATES and not any("focuslock" in c.lower() for c in project_chunks):
+        fl_score = 0
+        for kw in PROJECT_KEYWORDS.get("FocusLock", []):
+            if re.search(rf"\b{re.escape(kw)}\b", jd_lower):
+                fl_score += 3
+        for key in ["kotlin", "jetpack_compose", "android", "room_db"]:
+            if key in AUTHENTIC_SKILLS_CATALOG:
+                pat = AUTHENTIC_SKILLS_CATALOG[key][1]
+                if re.search(pat, jd_lower):
+                    fl_score += 2
+
+        if fl_score > 0 and len(scored) > 0:
+            min_score = min(s[0] for s in scored)
+            if fl_score > min_score:
+                for idx in reversed(range(len(scored))):
+                    if scored[idx][0] == min_score:
+                        scored[idx] = (fl_score, PROJECT_LATEX_TEMPLATES["FocusLock"].strip())
+                        break
+
     # Stable sort descending by score
     scored.sort(key=lambda x: x[0], reverse=True)
     reordered_chunks = [chunk for _, chunk in scored]
@@ -313,7 +370,16 @@ def tailor_professional_summary(
 
     # Tailor summary based on role category and matching skills
     tailored = current_summary
-    if "Java" in role_category:
+    if "Java" in role_category and ("AI" in role_category or any(k in ["rag", "spring_ai", "langchain", "qdrant", "llm"] for k, _ in matched_skills)):
+        skills_str = ", ".join(core_skill_names) if core_skill_names else "Spring Boot 3, Spring AI, Core Java, RAG, REST APIs, and Qdrant Vector DB"
+        tailored = (
+            f"AI Java Full Stack Developer with nearly 3 years of enterprise experience architecting distributed "
+            f"microservices, Generative AI pipelines, and reactive full-stack web platforms. Skilled in \\textbf{{{skills_str}}}, "
+            f"with hands-on frontend expertise in \\textbf{{React.js, Next.js, and Angular}}. "
+            f"Proficient with \\textbf{{Docker, AWS, Git, and CI/CD}}, alongside modern AI application engineering (Spring AI, RAG, Vector Search). "
+            f"Adept at clean system design (LLD/HLD, SOLID) and database connection pool tuning with HikariCP."
+        )
+    elif "Java" in role_category:
         skills_str = ", ".join(core_skill_names) if core_skill_names else "Core Java, Spring Boot, Spring Data JPA, Hibernate, REST APIs, and PostgreSQL"
         tailored = (
             f"Java Full Stack Developer with nearly 3 years of experience architecting and implementing "
@@ -352,6 +418,14 @@ def tailor_professional_summary(
             f"MEAN Stack Developer with nearly 3 years of experience delivering scalable enterprise web solutions "
             f"using \\textbf{{{skills_str}}}, RxJS, and NgRx. Proficient in modular component architecture, reactive state management, "
             f"REST API development, and secure authentication flows, backed by Docker and automated CI/CD pipelines."
+        )
+    elif any(k in ["kotlin", "android", "jetpack_compose"] for k, _ in matched_skills) or bool(re.search(r"\b(android|kotlin)\b", (jd_text or ""), re.IGNORECASE)):
+        skills_str = ", ".join(core_skill_names) if core_skill_names else "Kotlin, Jetpack Compose, Android SDK, Room Database, and MVVM"
+        tailored = (
+            f"Software Engineer with nearly 3 years of experience engineering high-performance software applications, "
+            f"distributed microservices, and native mobile architectures. Skilled in \\textbf{{{skills_str}}}, modern Clean Architecture, "
+            f"and offline-first system design. Proficient with Android background services (AccessibilityService, Foreground Services), "
+            f"SQLite/Room persistence, REST APIs, and responsive UI development."
         )
     else:  # General Full Stack
         skills_str = ", ".join(core_skill_names) if core_skill_names else "Python, FastAPI, Java, Spring Boot, React.js, Next.js, and PostgreSQL"

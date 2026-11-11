@@ -41,6 +41,19 @@ class ResumeSelectorTests(unittest.TestCase):
             self.assertIsNotNone(path, f"Failed on title: {t}")
             self.assertEqual(path.name, "Ganesh_Pirikirala_AI_FullStack_Resume.pdf", f"Expected AI FullStack for '{t}', got '{path.name}' ({reason})")
 
+    def test_ai_java_fullstack_matching(self):
+        titles = [
+            "AI Java Full Stack Developer",
+            "Java AI Engineer",
+            "Spring AI Developer",
+            "Senior Java / Generative AI Engineer",
+            "Full Stack Java AI Specialist"
+        ]
+        for t in titles:
+            path, reason = select_resume(job_title=t)
+            self.assertIsNotNone(path, f"Failed on title: {t}")
+            self.assertIn("AI_Java_FullStack", path.name, f"Expected AI Java resume for '{t}', got '{path.name}' ({reason})")
+
     def test_java_spring_matching_and_not_javascript(self):
         titles = [
             "Java Developer",

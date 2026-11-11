@@ -123,6 +123,15 @@ class ResumeGeneratorTests(unittest.TestCase):
         self.assertTrue(path.is_file())
         self.assertIn("Google", path.name)
 
+    def test_reorder_projects_injects_focuslock_for_android_jd(self):
+        tex_path = RESUMES_DIR / "Ganesh_Pirikirala_FullStack_Resume.tex"
+        tex = tex_path.read_text(encoding="utf-8")
+        jd = "Seeking an Android mobile engineer skilled in Kotlin, Jetpack Compose, Room SQLite, and background services."
+        tailored = reorder_projects_in_latex(tex, jd)
+        self.assertIn("FocusLock", tailored, "FocusLock project should be dynamically injected for Android / Kotlin JD")
+        self.assertIn("Kotlin, Jetpack Compose", tailored)
+        self.assertIn("AccessibilityService", tailored)
+
     def test_get_resume_path_with_job_context_syntax(self):
         path = get_resume_path(
             job_context="Full Stack Developer at Infosys",
