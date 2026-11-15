@@ -24,6 +24,10 @@ FILES = (
     '.github/workflows/tests.yml',
     'scripts/build_pdf_guide.py',
     'output/pdf/Naukri_Automation_Complete_Guide.pdf',
+    'scripts/scheduled_runner.sh',
+    'scripts/com.ganesh.jobsautomation.plist',
+    'scripts/install_schedule.sh',
+    'scripts/uninstall_schedule.sh',
 )
 
 

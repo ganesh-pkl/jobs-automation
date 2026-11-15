@@ -108,6 +108,10 @@ class Profile:
                     "glassdoor_daily_limit": 15, "apna_daily_limit": 25}
         for key, value in defaults.items():
             data.setdefault(key, value)
+        import os
+        env_mode = os.environ.get("BROWSER_MODE")
+        if env_mode in {"visible", "minimized", "headless"}:
+            data["browser_mode"] = env_mode
         if data.get("browser_mode", "visible") not in {"visible", "minimized", "headless"}:
             raise ValueError("browser_mode must be visible, minimized, or headless.")
 

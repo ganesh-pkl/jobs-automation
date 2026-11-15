@@ -89,9 +89,15 @@ jobs-automation/
 │   ├── video_scripts/            # Product video & engineering walkthrough scripts
 │   └── ai_engineer_video_scripts/# AI engineering educational video scripts
 │
-├── tests/                        # Comprehensive test suite (112 unit tests)
+├── tests/                        # Comprehensive test suite (124 unit tests)
 ├── docs/                         # Guides, user manual, and video scripts
-└── scripts/                      # Release packaging and PDF guide builders
+└── scripts/                      # Scheduled runners, launchd agents, packaging & guides
+    ├── scheduled_runner.sh       # Headless runner with concurrency locking & notifications
+    ├── install_schedule.sh       # One-click installer for macOS LaunchAgent (8:30 AM, 1:30 PM, 4:30 PM)
+    ├── uninstall_schedule.sh     # One-click uninstaller for LaunchAgent
+    ├── com.ganesh.jobsautomation.plist # LaunchAgent schedule definition template
+    ├── package_share.py          # Release packaging tool
+    └── build_pdf_guide.py        # PDF documentation builder
 ```
 
 ---
@@ -144,7 +150,33 @@ playwright install chromium
 
 ## Running the Automation
 
-### Daily Morning Run (Recommended)
+### 1. Automated Background Scheduling (macOS `launchd` - Recommended)
+
+Run the full pipeline completely hands-free 3 times a day without opening a terminal:
+- **Morning Run**: `8:30 AM` (before 9:00 AM)
+- **Midday Run**: `1:30 PM` (before 2:00 PM)
+- **Afternoon Run**: `4:30 PM` (before 5:00 PM)
+
+```bash
+# 1. Install & activate the automated schedule
+./scripts/install_schedule.sh
+
+# 2. Monitor live execution logs in real time
+tail -f logs/scheduled_run.log
+
+# 3. Stop or uninstall the schedule at any time
+./scripts/uninstall_schedule.sh
+```
+
+**Key Features:**
+* **Headless Background Execution**: Automatically sets `BROWSER_MODE="headless"` so Chrome runs silently in memory without popping up windows or stealing keyboard focus.
+* **Concurrency Locking**: Utilizes `/tmp/jobs_automation_scheduled.lock` to prevent overlapping runs.
+* **Sleep / Clamshell Resilient**: If your Mac is asleep during a scheduled run, `launchd` automatically triggers the job the moment you open your laptop.
+* **Native Desktop Notifications**: Emits macOS notification chimes upon run completion.
+
+---
+
+### 2. Manual Daily Run
 
 Run the full 9-platform pipeline every morning with a single command:
 
@@ -156,7 +188,7 @@ python daily_pipeline.py
 python run_all.py
 ```
 
-### Running Individual Platforms
+### 3. Running Individual Platforms
 
 You can also run any platform independently:
 
