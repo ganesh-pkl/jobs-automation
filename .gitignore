@@ -8,6 +8,7 @@ external_jobs.csv
 *.csv
 debug_screenshots/
 screenshots/
+logs/
 
 # Resumes and other applicant documents
 *.pdf

@@ -32,19 +32,20 @@ echo "==========================================================================
 
 cd "$PROJECT_DIR" || exit 1
 
-# Activate virtual environment
-if [ -f ".venv/bin/activate" ]; then
-    source .venv/bin/activate
-else
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: .venv not found in $PROJECT_DIR" >> "$LOG_FILE"
+export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
+
+if [ ! -f "$PYTHON_BIN" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Python binary not found at $PYTHON_BIN" >> "$LOG_FILE"
     exit 1
 fi
 
 # Enforce headless mode in background so browser windows don't disrupt current desktop work
 export BROWSER_MODE="headless"
+export PYTHONUNBUFFERED="1"
 
 # Run the full multi-platform daily pipeline
-python daily_pipeline.py >> "$LOG_FILE" 2>&1
+"$PYTHON_BIN" daily_pipeline.py >> "$LOG_FILE" 2>&1
 EXIT_CODE=$?
 
 echo "" >> "$LOG_FILE"
