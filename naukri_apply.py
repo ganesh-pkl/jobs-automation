@@ -25,6 +25,7 @@ from common import learned_answers
 from common.human_input import ask_user
 from common import stats_tracker
 from common.answers import direct_profile_answer, get_screening_answer
+from common.stealth import get_context_options, apply_stealth
 
 SESSION_FILE = "session_naukri.json"
 LOG_FILE = "applications_log.csv"
@@ -1457,7 +1458,8 @@ def run(preview: bool = False, limit: int | None = None):
             browser = p.chromium.launch(headless=False, slow_mo=150, args=["--start-minimized"])
         else:
             browser = p.chromium.launch(headless=False, slow_mo=150)
-        context = browser.new_context(storage_state=SESSION_FILE)
+        context = browser.new_context(**get_context_options(storage_state=SESSION_FILE))
+        apply_stealth(context)
         page = context.new_page()
 
         for role in profile.target_roles:
