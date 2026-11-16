@@ -40,8 +40,8 @@ if [ ! -f "$PYTHON_BIN" ]; then
     exit 1
 fi
 
-# Enforce headless mode in background so browser windows don't disrupt current desktop work
-export BROWSER_MODE="headless"
+# Run in visible mode per user preference so browsers bypass anti-bot challenges
+export BROWSER_MODE="visible"
 export PYTHONUNBUFFERED="1"
 
 # Run the full multi-platform daily pipeline
