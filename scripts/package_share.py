@@ -28,6 +28,7 @@ FILES = (
     'scripts/com.ganesh.jobsautomation.plist',
     'scripts/install_schedule.sh',
     'scripts/uninstall_schedule.sh',
+    'scripts/send_status_email.js',
 )
 
 

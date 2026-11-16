@@ -59,5 +59,11 @@ else
     osascript -e 'display notification "Job pipeline finished with notes. Check logs." with title "Jobs Automation" sound name "Basso"' 2>/dev/null || true
 fi
 
+# Send automated email status report via Resend API
+if [ -f "$PROJECT_DIR/scripts/send_status_email.js" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Sending email status report via Resend..." >> "$LOG_FILE"
+    node "$PROJECT_DIR/scripts/send_status_email.js" >> "$LOG_FILE" 2>&1 || true
+fi
+
 exit $EXIT_CODE
 
