@@ -77,8 +77,8 @@ TRIGGER_PHRASES = {
         "gender", "sex",
     ],
     "notice_period": ["notice period", "notice", "joining time", "how soon"],
-    "current_ctc": ["current ctc", "current salary", "current compensation", "present ctc", "present salary", "current pay", "current annual salary"],
-    "expected_ctc": ["expected ctc", "expected salary", "expected compensation", "desired ctc", "expectation", "expected annual salary"],
+    "current_ctc": ["current ctc", "cctc", "current salary", "current compensation", "present ctc", "present salary", "current pay", "current annual salary", "current comp"],
+    "expected_ctc": ["expected ctc", "ectc", "expected salary", "expected compensation", "desired ctc", "expectation", "expectations", "expected annual salary", "expected comp"],
     "current_city": ["current city", "current location", "which city", "current place", "located in", "base location", "city"],
     "relocate": ["relocate", "relocation", "willing to move"],
     "night_shift": ["night shift"],
@@ -95,6 +95,12 @@ TOTAL_EXPERIENCE_PHRASES = (
     "experience in years",
     "work experience",
     "how many years of experience",
+)
+
+EXCLUDED_SKILLS = (
+    "sfcc", "salesforce", ".net", "c#", "c and net", "net core", "asp.net",
+    "entity framework", "dapper", "alation", "ibm db2", "db2", "opencl",
+    "sap", "abap", "cobol", "fortran", "netapp", "flexera", "mainframes", "pega",
 )
 
 
@@ -139,9 +145,58 @@ def direct_profile_answer(question: str, answers: dict) -> str | None:
     if any(w in lower_q for w in ("served in the military", "military service", "military", "armed forces", "veteran", "ex-serviceman")):
         return "Never served"
 
-    # Layoff / Termination questions
-    if any(w in lower_q for w in ("laid off", "layoff", "lay off", "got laid off")):
+    # Layoff / Termination / Conviction / Disqualification questions
+    if any(w in lower_q for w in (
+        "laid off", "layoff", "lay off", "got laid off", "terminated", "fired", "dismissed",
+        "disciplinary", "convicted", "criminal", "felony", "court case", "legal proceeding",
+        "service bond", "bond", "service agreement", "non-compete",
+    )):
         return "No"
+
+    # Visa sponsorship requirement
+    if any(w in lower_q for w in ("require sponsorship", "need sponsorship", "visa sponsorship", "require visa")):
+        return "No"
+
+    # Combined CCTC & ECTC questions (e.g. "What is your CCTC & ECTC?")
+    if (
+        any(w in lower_q for w in ("cctc", "current ctc", "present ctc", "current compensation", "current salary"))
+        and any(w in lower_q for w in ("ectc", "expected ctc", "desired ctc", "expected compensation", "expected salary", "expectations", "expectation"))
+    ):
+        c_ctc = str(answers.get("current_ctc_lpa", "6"))
+        e_ctc = str(answers.get("expected_ctc_lpa", "9"))
+        return f"Current CTC: {c_ctc} LPA, Expected CTC: {e_ctc} LPA"
+
+    # Product-based vs Service-based company questions
+    if "product" in lower_q and "service" in lower_q:
+        return "Product based"
+
+    # Worked at product-based company before
+    if any(w in lower_q for w in ("worked at a product", "worked in a product", "product-based company", "product based company", "product company")):
+        return "Yes"
+
+    # Serving notice period (Candidate is an immediate joiner, so NOT currently serving notice)
+    if any(w in lower_q for w in ("serving a notice period", "serving notice period", "serving notice", "currently serving")):
+        np_days = int(answers.get("notice_period_days", 0))
+        return "Yes" if np_days > 0 else "No"
+
+    # Currently living in / residing in [City] (Candidate lives in Hyderabad)
+    if any(w in lower_q for w in ("currently living in", "currently residing in", "currently based in", "are you living in", "are you based in", "living in", "residing in", "based in")) and not any(w in lower_q for w in ("relocate", "relocation", "willing to move", "open to", "comfortable")):
+        curr_city = str(answers.get("current_city", "Hyderabad")).lower()
+        if "remote" in lower_q:
+            return "Yes"
+        if curr_city in lower_q:
+            return "Yes"
+        for other_city in ("bangalore", "bengaluru", "pune", "gurgaon", "gurugram", "noida", "delhi", "mumbai", "chennai", "kolkata"):
+            if other_city in lower_q:
+                return "No"
+
+    # Framework expertise questions (e.g. "Which Python framework do you have expertise in?")
+    if "framework" in lower_q and any(w in lower_q for w in ("which", "what", "expertise", "expert", "hands-on", "experience")):
+        if "python" in lower_q:
+            return "FastAPI, Django, Flask"
+        if any(w in lower_q for w in ("frontend", "ui", "client")):
+            return "React.js, Next.js"
+        return "Spring Boot, React.js, FastAPI, Node.js"
 
     # Ex-employer / Infosys ID questions
     if any(w in lower_q for w in ("ex infy id", "infy id", "infosys id", "ex-infy", "ex infy", "ex-employee id", "previous employee id")):
@@ -232,11 +287,6 @@ def direct_profile_answer(question: str, answers: dict) -> str | None:
             return str(answers.get("country_name", "India"))
 
     # 9. Check Excluded / Unsupported skills (0 years)
-    EXCLUDED_SKILLS = (
-        "sfcc", "salesforce", ".net", "c#", "c and net", "net core", "asp.net",
-        "entity framework", "dapper", "alation", "ibm db2", "db2", "opencl",
-        "sap", "abap", "cobol", "fortran", "netapp", "flexera",
-    )
     if any(s in lower_q for s in EXCLUDED_SKILLS) and any(w in lower_q for w in ("experience", "years", "yrs", "handson", "production")):
         return "0"
 
@@ -377,9 +427,14 @@ def get_screening_answer(question_text: str, profile: Profile, job_context: str 
         fallback = str(answers.get("state_province", "Telangana"))
     elif "country" in lower_q:
         fallback = str(answers.get("country_name", "India"))
-    elif any(w in lower_q for w in ("current ctc", "current salary", "present ctc", "current compensation")):
+    elif (
+        any(w in lower_q for w in ("cctc", "current ctc", "present ctc", "current compensation", "current salary"))
+        and any(w in lower_q for w in ("ectc", "expected ctc", "desired ctc", "expected compensation", "expected salary", "expectations", "expectation"))
+    ):
+        fallback = f"Current CTC: {answers.get('current_ctc_lpa', '6')} LPA, Expected CTC: {answers.get('expected_ctc_lpa', '9')} LPA"
+    elif any(w in lower_q for w in ("current ctc", "cctc", "current salary", "present ctc", "current compensation")):
         fallback = str(answers.get("current_ctc_lpa", "6"))
-    elif any(w in lower_q for w in ("expected ctc", "expected salary", "desired ctc", "expected compensation")):
+    elif any(w in lower_q for w in ("expected ctc", "ectc", "expected salary", "desired ctc", "expected compensation", "expectations", "expectation")):
         fallback = str(answers.get("expected_ctc_lpa", "9"))
     elif "ctc" in lower_q or "salary" in lower_q or "compensation" in lower_q:
         fallback = str(answers.get("expected_ctc_lpa", "9"))
@@ -392,6 +447,11 @@ def get_screening_answer(question_text: str, profile: Profile, job_context: str 
         fallback = str(answers.get("current_city", "Hyderabad"))
     elif any(w in lower_q for w in ("experience", "years", "yrs", "how many years", "total years", "backend", "frontend", "full stack", "fullstack", "engineering", "lead", "leadership", "scale")):
         fallback = str(answers.get("years_experience", "3"))
+    elif any(lower_q.startswith(w) for w in ("describe", "explain", "tell us", "share", "why", "detail", "write", "brief")):
+        fallback = (
+            "Full-Stack Software Developer with 3 years of experience in Java, Spring Boot, React.js, Node.js, Python, and RESTful microservices. "
+            "Experienced in building scalable web applications and microservices. Immediately available to join."
+        )
     elif any(w in lower_q for w in ("willing", "ready", "open to", "comfortable", "have experience", "worked on", "authorized", "agree", "accept")):
         fallback = "Yes"
     elif any(w in lower_q for w in ("sponsorship", "visa required", "require visa", "require sponsorship")):

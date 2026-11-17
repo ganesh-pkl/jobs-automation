@@ -59,19 +59,40 @@ class HiristEngineTests(unittest.TestCase):
             "current_ctc_lpa": 6,
             "expected_ctc_lpa": 9,
             "notice_period_days": 0,
+            "current_city": "Hyderabad",
         })
         # Notice period
         notice_opts = [{"idx": 0, "label": "Immediate"}, {"idx": 1, "label": "30 Days"}, {"idx": 2, "label": "60 Days"}]
         self.assertEqual(hirist_apply._auto_decide_hirist_radio("What is your notice period?", notice_opts, profile)["label"], "Immediate")
+        # Serving notice period (immediate joiner -> No)
+        serving_opts = [{"idx": 0, "label": "Yes"}, {"idx": 1, "label": "No"}]
+        self.assertEqual(hirist_apply._auto_decide_hirist_radio("Are you currently serving a notice period?", serving_opts, profile)["label"], "No")
         # Relocation
         reloc_opts = [{"idx": 0, "label": "Yes"}, {"idx": 1, "label": "No"}]
         self.assertEqual(hirist_apply._auto_decide_hirist_radio("Willing to relocate to Bengaluru?", reloc_opts, profile)["label"], "Yes")
-        # Military / Layoff
+        # Military / Layoff / Disqualification / Termination
         mil_opts = [{"idx": 0, "label": "Never served"}, {"idx": 1, "label": "Served"}]
         self.assertEqual(hirist_apply._auto_decide_hirist_radio("Served in military?", mil_opts, profile)["label"], "Never served")
+        term_opts = [{"idx": 0, "label": "Yes"}, {"idx": 1, "label": "No"}]
+        self.assertEqual(hirist_apply._auto_decide_hirist_radio("Have you ever been terminated or dismissed from employment?", term_opts, profile)["label"], "No")
+        bond_opts = [{"idx": 0, "label": "Yes"}, {"idx": 1, "label": "No"}]
+        self.assertEqual(hirist_apply._auto_decide_hirist_radio("Do you have any service bond or agreement?", bond_opts, profile)["label"], "No")
+        # Product vs Service based
+        prod_opts = [{"idx": 0, "label": "Service based"}, {"idx": 1, "label": "Product based"}]
+        self.assertEqual(hirist_apply._auto_decide_hirist_radio("Is your current company Product based or Service based?", prod_opts, profile)["label"], "Product based")
+        # Highest Education
+        edu_opts = [{"idx": 0, "label": "High School"}, {"idx": 1, "label": "Diploma"}, {"idx": 2, "label": "B.Tech / Bachelor's"}, {"idx": 3, "label": "PhD"}]
+        self.assertEqual(hirist_apply._auto_decide_hirist_radio("What is your highest educational qualification?", edu_opts, profile)["label"], "B.Tech / Bachelor's")
+        # Living in [City] (Candidate lives in Hyderabad)
+        live_gurgaon_opts = [{"idx": 0, "label": "Yes"}, {"idx": 1, "label": "No"}]
+        self.assertEqual(hirist_apply._auto_decide_hirist_radio("Are you currently living in Gurgaon/Gurugram?", live_gurgaon_opts, profile)["label"], "No")
+        live_hyd_opts = [{"idx": 0, "label": "Yes"}, {"idx": 1, "label": "No"}]
+        self.assertEqual(hirist_apply._auto_decide_hirist_radio("Are you currently living in Hyderabad?", live_hyd_opts, profile)["label"], "Yes")
         # Experience range
         exp_opts = [{"idx": 0, "label": "0-1 years"}, {"idx": 1, "label": "1-3 years"}, {"idx": 2, "label": "5+ years"}]
         self.assertEqual(hirist_apply._auto_decide_hirist_radio("Total experience range", exp_opts, profile)["label"], "1-3 years")
+        exp_lt_opts = [{"idx": 0, "label": "<3 years"}, {"idx": 1, "label": "3-5 years"}, {"idx": 2, "label": "5+ years"}]
+        self.assertEqual(hirist_apply._auto_decide_hirist_radio("Experience in software development", exp_lt_opts, profile)["label"], "<3 years")
 
     def test_format_input_answer(self):
         profile = Profile({
@@ -93,6 +114,25 @@ class HiristEngineTests(unittest.TestCase):
         self.assertEqual(hirist_apply._format_input_answer("Expected CTC", "text", profile, ""), "9 LPA")
         self.assertEqual(hirist_apply._format_input_answer("Current Location", "text", profile, ""), "Hyderabad")
         self.assertEqual(hirist_apply._format_input_answer("Mobile / Phone number", "text", profile, ""), "7659869814")
+        # Combined CCTC & ECTC
+        self.assertEqual(hirist_apply._format_input_answer("What is your CCTC & ECTC?", "text", profile, ""), "Current CTC: 6 LPA, Expected CTC: 9 LPA")
+        # Relevant experience in skills
+        self.assertEqual(hirist_apply._format_input_answer("What is your experience in Python Full Stack?", "textarea", profile, ""), "3 years")
+        self.assertEqual(hirist_apply._format_input_answer("What is your experience in AWS?", "textarea", profile, ""), "3 years")
+        self.assertEqual(hirist_apply._format_input_answer("What is your experience in React Js /Angular", "textarea", profile, ""), "3 years")
+        # Excluded skills
+        self.assertEqual(hirist_apply._format_input_answer("Experience in SFCC", "text", profile, ""), "0")
+        self.assertEqual(hirist_apply._format_input_answer("Years of experience in SAP ABAP", "text", profile, ""), "0")
+        # Product vs Service company
+        self.assertEqual(hirist_apply._format_input_answer("Is your current company is Product based or Service based?", "text", profile, ""), "Product based")
+        # Frameworks
+        self.assertIn("FastAPI", hirist_apply._format_input_answer("Which Python framework do you have expertise in?", "text", profile, ""))
+        # Institution & Degree
+        self.assertEqual(hirist_apply._format_input_answer("Which institution did you complete your B.Tech from?", "text", profile, ""), "Chaitanya Bharathi Institute of Technology")
+        self.assertEqual(hirist_apply._format_input_answer("What is your Highest Educational Qualification ?", "text", profile, ""), "Bachelor of Technology")
+        # Living in [City]
+        self.assertEqual(hirist_apply._format_input_answer("Are you currently living in Gurgaon/Gurugram?", "text", profile, ""), "No")
+        self.assertEqual(hirist_apply._format_input_answer("Are you currently living in Hyderabad?", "text", profile, ""), "Yes")
 
     def test_is_hirist_success(self):
         self.assertTrue(hirist_apply._is_hirist_success("https://www.hirist.tech/job/applied/12345", ""))

@@ -17,7 +17,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 from common.profile import Profile
-from common.answers import get_screening_answer, is_sensitive_field, direct_profile_answer
+from common.answers import get_screening_answer, is_sensitive_field, direct_profile_answer, EXCLUDED_SKILLS
 from common.human_input import ask_user
 from common.external_tracker import log_external_job
 from common import stats_tracker
@@ -92,7 +92,8 @@ def _should_check_checkbox(label: str, profile: Profile) -> bool:
     DISQUALIFY_HINTS = (
         "convicted", "criminal", "terminated", "fired", "disciplinary",
         "visa sponsorship", "require sponsorship", "need sponsorship",
-        "bond", "service agreement", "legal proceeding",
+        "bond", "service agreement", "legal proceeding", "litigation",
+        "non-compete", "felony",
     )
     if any(h in lower for h in DISQUALIFY_HINTS):
         return False
@@ -112,20 +113,31 @@ def _should_check_checkbox(label: str, profile: Profile) -> bool:
         "authorization", "eligible", "citizen", "work permit",
         "hybrid", "remote", "wfh", "work from home", "work from office",
         "comfortable", "ready", "willing", "open to", "flexible",
-        "bangalore", "bengaluru", "hyderabad", "notice period",
+        "bangalore", "bengaluru", "hyderabad", "notice period", "pune", "gurgaon", "delhi", "noida", "mumbai",
     )
     if any(h in lower for h in AVAILABILITY_HINTS):
         return True
 
-    # 4. Candidate Core Technical Skills -> CHECK IF MATCH
+    # 4. Candidate Technical Skills -> CHECK IF MATCH
+    candidate_skills = [
+        s.lower().strip() for s in (
+            (profile.data.get("skills_primary") or []) +
+            (profile.data.get("skills_adjacent") or []) +
+            (profile.data.get("target_roles") or [])
+        ) if s
+    ]
+    for skill in candidate_skills:
+        if len(skill) >= 2 and re.search(r"\b" + re.escape(skill) + r"\b", lower):
+            return True
+
     CORE_SKILL_HINTS = (
         "java", "spring", "spring boot", "springboot", "react", "react.js", "reactjs",
-        "node", "node.js", "nodejs", "javascript", "typescript", "python",
-        "sql", "mysql", "postgresql", "postgres", "mongodb", "redis", "database",
+        "node", "node.js", "nodejs", "javascript", "typescript", "python", "fastapi", "django", "flask",
+        "next.js", "nextjs", "sql", "mysql", "postgresql", "postgres", "mongodb", "redis", "database",
         "rest", "api", "apis", "microservices", "web development", "backend",
         "frontend", "full stack", "fullstack", "docker", "git", "ci/cd",
         "cicd", "aws", "cloud", "software development", "software engineering",
-        "data structures", "algorithms", "problem solving", "kafka",
+        "data structures", "algorithms", "problem solving", "kafka", "ai", "llm", "rag",
     )
     for skill in CORE_SKILL_HINTS:
         if re.search(r"\b" + re.escape(skill) + r"\b", lower):
@@ -134,7 +146,7 @@ def _should_check_checkbox(label: str, profile: Profile) -> bool:
     # 5. Excluded or irrelevant technologies -> DO NOT CHECK
     EXCLUDED_TECH = (
         "php", "laravel", "ruby", "rails", "cobol", "fortran", "c++", "embedded",
-        ".net", "dotnet", "c#", "csharp", "salesforce", "sap", "abap",
+        ".net", "dotnet", "c#", "csharp", "salesforce", "sap", "abap", "sfcc", "mainframes", "pega",
     )
     if any(re.search(r"\b" + re.escape(tech) + r"\b", lower) for tech in EXCLUDED_TECH):
         return False
@@ -184,7 +196,7 @@ def _decide_hirist_checkbox_options(question: str, options: list[dict], profile:
         for opt in options:
             idx = opt["idx"]
             lbl_lower = (opt.get("label") or "").strip().lower()
-            if any(h in lbl_lower for h in ("yes", "bengaluru", "bangalore", "hyderabad", "remote", "open to relocate")):
+            if any(h in lbl_lower for h in ("yes", "bengaluru", "bangalore", "hyderabad", "pune", "gurgaon", "delhi", "noida", "remote", "open to relocate")):
                 decisions[idx] = True
             elif any(h in lbl_lower for h in ("no", "not willing")):
                 decisions[idx] = False
@@ -202,10 +214,18 @@ def _decide_hirist_checkbox_options(question: str, options: list[dict], profile:
     # 4. Mutually exclusive Yes / No group
     has_yes_no = any((opt.get("label") or "").strip().lower() in ("yes", "no") for opt in options)
     if has_yes_no:
+        # Check if question is a negative/disqualifying question
+        is_disqualifying = any(h in lower_q for h in (
+            "convicted", "criminal", "terminated", "fired", "disciplinary", "sponsorship",
+            "visa", "bond", "service agreement", "non-compete", "felony", "court"
+        ))
         for opt in options:
             idx = opt["idx"]
             lbl_lower = (opt.get("label") or "").strip().lower()
-            decisions[idx] = (lbl_lower == "yes")
+            if is_disqualifying:
+                decisions[idx] = (lbl_lower == "no")
+            else:
+                decisions[idx] = (lbl_lower == "yes")
         return decisions
 
     # 5. For general agreements, declarations, or standalone checkboxes
@@ -222,56 +242,109 @@ def _auto_decide_hirist_radio(question: str, options: list[dict], profile: Profi
         return None
     lower_q = " ".join((question or "").lower().split())
 
-    def find_opt(target: str) -> dict | None:
-        t_low = target.lower()
-        for opt in options:
-            lbl = opt.get("label", "").strip().lower()
-            val = opt.get("value", "").strip().lower()
-            if lbl == t_low or val == t_low or t_low in lbl or t_low in val:
-                return opt
+    def find_opt(*targets: str) -> dict | None:
+        for target in targets:
+            t_low = target.lower()
+            for opt in options:
+                lbl = opt.get("label", "").strip().lower()
+                val = opt.get("value", "").strip().lower()
+                if lbl == t_low or val == t_low:
+                    return opt
+            for opt in options:
+                lbl = opt.get("label", "").strip().lower()
+                val = opt.get("value", "").strip().lower()
+                if t_low in lbl or t_low in val:
+                    return opt
         return None
 
-    # Notice period
+    # 1. Disqualification / Military / Layoff / Bond / Visa / Conviction / Termination -> MUST BE "No" / "Never"
+    if any(w in lower_q for w in (
+        "military", "laid off", "layoff", "terminated", "fired", "dismissed", "disciplinary",
+        "sponsorship", "visa", "bond", "service agreement", "non-compete", "convicted",
+        "criminal", "felony", "court", "legal proceeding", "litigation"
+    )):
+        match = find_opt("no", "never served", "none", "not applicable", "na", "false")
+        if match:
+            return match
+
+    # 2. Serving notice period (Candidate is immediate joiner -> No / Immediate)
+    if any(w in lower_q for w in ("serving a notice period", "serving notice period", "serving notice", "currently serving")):
+        match = find_opt("no", "immediate", "not serving", "0 days")
+        if match:
+            return match
+
+    # 3. Product based vs Service based
+    if "product" in lower_q and "service" in lower_q:
+        match = find_opt("product based", "product")
+        if match:
+            return match
+
+    # 4. Highest Education / Degree / Qualification
+    if any(w in lower_q for w in ("qualification", "degree", "highest education", "education level")):
+        match = find_opt("b.tech", "btech", "b.e", "bachelor", "engineering", "graduate", "degree")
+        if match:
+            return match
+
+    # 5. Work Mode / Workplace / Shift
+    if any(w in lower_q for w in ("work mode", "workplace", "work model", "shift", "work setup")):
+        match = find_opt("hybrid", "any", "day shift", "regular", "flexible", "work from office", "remote")
+        if match:
+            return match
+
+    # 6. Gender
+    if any(w in lower_q for w in ("gender", "sex")) and not any(w in lower_q for w in ("preference", "bias")):
+        match = find_opt("male")
+        if match:
+            return match
+
+    # 7. Currently living in / Residing in [City] (Candidate lives in Hyderabad)
+    if any(w in lower_q for w in ("currently living in", "currently residing in", "currently based in", "are you living in", "are you based in", "living in", "residing in", "based in")) and not any(w in lower_q for w in ("relocate", "relocation", "willing to move", "open to", "comfortable")):
+        curr_city = str(profile.data.get("current_city", "Hyderabad")).lower()
+        if "remote" in lower_q or curr_city in lower_q:
+            match = find_opt("yes")
+            if match:
+                return match
+        for other_city in ("bangalore", "bengaluru", "pune", "gurgaon", "gurugram", "noida", "delhi", "mumbai", "chennai"):
+            if other_city in lower_q:
+                match = find_opt("no")
+                if match:
+                    return match
+
+    # 8. Relocation / Location willingness
+    if any(w in lower_q for w in ("relocate", "relocation", "location", "bangalore", "bengaluru", "hyderabad", "pune", "willing to move")):
+        match = find_opt("yes", "bangalore", "bengaluru", "hyderabad", "pune", "can relocate", "open to relocate")
+        if match:
+            return match
+
+    # 9. Notice period timeline
     if any(w in lower_q for w in ("notice period", "how soon", "joining")):
-        for pref in ("immediate", "0-15", "0 to 15", "15 days", "30 days", "yes"):
-            match = find_opt(pref)
-            if match:
-                return match
+        match = find_opt("immediate", "0- 7", "0-7", "0-15", "0 to 15", "15 days", "30 days", "yes")
+        if match:
+            return match
 
-    # Relocation
-    if any(w in lower_q for w in ("relocate", "relocation", "location", "bangalore", "bengaluru", "hyderabad")):
-        for pref in ("yes", "bangalore", "bengaluru", "hyderabad", "can relocate"):
-            match = find_opt(pref)
-            if match:
-                return match
-
-    # Disqualification / Military / Layoff / Bond / Visa
-    if any(w in lower_q for w in ("military", "laid off", "layoff", "sponsorship", "visa", "bond", "convicted", "court")):
-        for pref in ("no", "never served", "none"):
-            match = find_opt(pref)
-            if match:
-                return match
-
-    # Experience / Technical capability / Weekend / Remote
-    if any(w in lower_q for w in ("experience", "comfortable", "willing", "available", "remote", "wfh", "interview", "hands on")):
+    # 10. Experience / Technical capability / Weekend / Remote / Product company experience
+    if any(w in lower_q for w in ("experience", "comfortable", "willing", "available", "remote", "wfh", "interview", "hands on", "product-based", "product based")):
         match = find_opt("yes")
         if match:
             return match
 
-    # Experience ranges (e.g. 1-3, 3-5, 3+)
+    # 11. Experience ranges (e.g. 1-3, 2-4, 3-5, 3+, <3, <5)
     exp_years = float(profile.total_experience_years or 3)
     for opt in options:
         lbl = opt.get("label", "").lower()
         digits = [float(s) for s in re.findall(r"\d+(?:\.\d+)?", lbl)]
+        if "<" in lbl and digits and exp_years <= digits[0]:
+            return opt
         if len(digits) == 2 and digits[0] <= exp_years <= digits[1]:
             return opt
-        elif len(digits) == 1 and "+" in lbl and exp_years >= digits[0]:
+        elif len(digits) == 1 and ("+" in lbl or ">" in lbl) and exp_years >= digits[0]:
             return opt
 
-    # Prefer Yes if available
-    yes_match = find_opt("yes")
-    if yes_match:
-        return yes_match
+    # Prefer Yes if available (unless question looks negative)
+    if not any(w in lower_q for w in ("convict", "criminal", "terminate", "disciplinary", "sponsorship", "bond")):
+        yes_match = find_opt("yes")
+        if yes_match:
+            return yes_match
 
     return options[0]
 
@@ -290,52 +363,105 @@ def _format_input_answer(label: str, input_type: str, profile: Profile, job_cont
 
     is_numeric = input_type == "number" or any(w in lower_lbl for w in ("in lpa", "in lakhs", "in years", "in days", "numeric", "number of"))
 
-    # Current CTC
-    if any(w in lower_lbl for w in ("current ctc", "present ctc", "current salary", "present salary")):
+    # 1. Product-based vs Service-based company
+    if "product" in lower_lbl and "service" in lower_lbl:
+        return "Product based"
+
+    # 2. Combined Current CTC & Expected CTC (e.g. "What is your CCTC & ECTC?")
+    if (
+        any(w in lower_lbl for w in ("cctc", "current ctc", "present ctc", "current compensation", "current salary", "present salary"))
+        and any(w in lower_lbl for w in ("ectc", "expected ctc", "desired ctc", "expected compensation", "expected salary", "desired salary", "expectations", "expectation"))
+    ):
+        c_ctc = str(profile.data.get("current_ctc_lpa", 6))
+        e_ctc = str(profile.data.get("expected_ctc_lpa", 9))
+        return _clean_numeric_value(e_ctc, default="9") if is_numeric else f"Current CTC: {c_ctc} LPA, Expected CTC: {e_ctc} LPA"
+
+    # 3. Current CTC
+    if any(w in lower_lbl for w in ("current ctc", "cctc", "present ctc", "current salary", "present salary", "current compensation", "current annual salary")):
         ctc_val = str(profile.data.get("current_ctc_lpa", 6))
         return _clean_numeric_value(ctc_val, default="6") if is_numeric else f"{ctc_val} LPA"
 
-    # Expected CTC
-    if any(w in lower_lbl for w in ("expected ctc", "desired ctc", "expected salary", "desired salary", "ctc expectation")):
+    # 4. Expected CTC
+    if any(w in lower_lbl for w in ("expected ctc", "ectc", "desired ctc", "expected salary", "desired salary", "ctc expectation", "expected compensation", "expectations", "expectation")):
         ctc_val = str(profile.data.get("expected_ctc_lpa", 9))
         return _clean_numeric_value(ctc_val, default="9") if is_numeric else f"{ctc_val} LPA"
 
-    # Total Experience
-    if any(w in lower_lbl for w in ("total experience", "overall experience", "total years", "years of experience")):
+    # 4. Excluded / Unsupported skills -> 0
+    if any(s in lower_lbl for s in EXCLUDED_SKILLS) and any(w in lower_lbl for w in ("experience", "years", "yrs", "handson", "production")):
+        return "0"
+
+    # 5. Total Experience vs Skill-specific experience
+    asks_skill_specific = bool(
+        re.search(r"\b(?:experience|years?)\b[^?]{0,80}\b(?:in|with|using|on)\s+(?!years?\b|yrs?\b|months?\b)[a-z0-9#+.]+", lower_lbl)
+        or re.search(r"\byears?\s+of\s+(?!experience\b)[a-z0-9#+.]+\s+experience\b", lower_lbl)
+    )
+    if not asks_skill_specific and any(w in lower_lbl for w in ("total experience", "overall experience", "total years", "years of experience", "total years of experience")):
         exp_val = str(profile.total_experience_years or 3)
         return _clean_numeric_value(exp_val, default="3") if is_numeric else exp_val
 
-    # Notice Period
-    if any(w in lower_lbl for w in ("notice period", "how soon", "joining time", "days to join")):
+    # 6. Notice Period / Last working day
+    if any(w in lower_lbl for w in ("notice period", "how soon", "joining time", "days to join", "last working day", "lwd", "availability to join")):
         days_val = str(profile.data.get("notice_period_days", 0))
         if is_numeric or "in days" in lower_lbl or "days" in lower_lbl:
             return _clean_numeric_value(days_val, default="0")
         return "Immediately available"
 
-    # Relevant skill experience (e.g. "Experience in React")
-    if any(w in lower_lbl for w in ("experience in", "experience with", "relevant experience", "hands-on experience")):
-        from common.answers import EXCLUDED_SKILLS
+    # 6. Serving notice period (Immediate joiner -> No / 0)
+    if any(w in lower_lbl for w in ("serving a notice period", "serving notice period", "serving notice", "currently serving")):
+        return "0" if is_numeric else "No"
+
+    # 7. Product-based vs Service-based company
+    if "product" in lower_lbl and "service" in lower_lbl:
+        return "Product based"
+
+    # 8. Framework expertise (e.g. "Which Python framework do you have expertise in?")
+    if "framework" in lower_lbl and any(w in lower_lbl for w in ("which", "what", "expertise", "expert", "hands-on")):
+        if "python" in lower_lbl:
+            return "FastAPI, Django, Flask"
+        if any(w in lower_lbl for w in ("frontend", "ui", "client")):
+            return "React.js, Next.js"
+        return "Spring Boot, React.js, FastAPI, Node.js"
+
+    # 9. Educational Institution / College / Degree
+    if any(w in lower_lbl for w in ("institution", "college", "university", "institute", "school", "alma mater")):
+        return "Chaitanya Bharathi Institute of Technology"
+    if any(w in lower_lbl for w in ("highest educational qualification", "highest qualification", "degree held", "degree name")):
+        return "Bachelor of Technology"
+
+    # 10. Relevant skill experience (e.g. "What is your experience in Python Full Stack?")
+    if any(w in lower_lbl for w in ("experience in", "experience with", "relevant experience", "hands-on experience", "experience as", "experience with")):
         if any(s in lower_lbl for s in EXCLUDED_SKILLS):
             return "0"
         exp_val = str(profile.total_experience_years or 3)
-        return _clean_numeric_value(exp_val, default="3") if is_numeric else exp_val
+        if is_numeric:
+            return _clean_numeric_value(exp_val, default="3")
+        return f"{exp_val} years"
 
-    # Phone / Mobile
+    # 11. Living in [City] (Candidate lives in Hyderabad)
+    if any(w in lower_lbl for w in ("currently living in", "currently residing in", "currently based in", "are you living in", "are you based in", "living in", "residing in", "based in")) and not any(w in lower_lbl for w in ("relocate", "relocation", "willing", "open to", "comfortable")):
+        curr_city = str(profile.data.get("current_city", "Hyderabad")).lower()
+        if "remote" in lower_lbl or curr_city in lower_lbl:
+            return "Yes"
+        for other_city in ("bangalore", "bengaluru", "pune", "gurgaon", "gurugram", "delhi", "noida", "mumbai", "chennai"):
+            if other_city in lower_lbl:
+                return "No"
+
+    # 12. Phone / Mobile
     if any(w in lower_lbl for w in ("phone", "mobile", "contact number")):
         return str(profile.data.get("phone", profile.data.get("mobile_number", "7659869814")))
 
-    # Email
+    # 13. Email
     if any(w in lower_lbl for w in ("email", "e-mail")):
         return str(profile.data.get("email", "ganesh.pkl08@gmail.com"))
 
-    # Location / City
-    if any(w in lower_lbl for w in ("current city", "current location", "residing in")):
+    # 14. Location / City
+    if any(w in lower_lbl for w in ("current city", "current location", "residing in", "where are you located", "located currently")):
         return str(profile.data.get("current_city", "Hyderabad"))
 
     if any(w in lower_lbl for w in ("preferred city", "preferred location", "preferred work location")):
         return "Bengaluru, Hyderabad"
 
-    # LinkedIn / GitHub
+    # 15. LinkedIn / GitHub / Portfolio
     if "linkedin" in lower_lbl:
         return str(profile.data.get("linkedin_url", profile.data.get("linkedin", "https://linkedin.com/in/ganesh-pirikirala")))
     if "github" in lower_lbl:
@@ -343,18 +469,19 @@ def _format_input_answer(label: str, input_type: str, profile: Profile, job_cont
     if any(w in lower_lbl for w in ("portfolio", "website", "personal site")):
         return str(profile.data.get("portfolio_url", profile.data.get("portfolio", "")))
 
-    # Pitch / Cover note / Summary
-    if any(w in lower_lbl for w in ("cover note", "cover letter", "summary", "why should we hire", "pitch", "brief note", "note to recruiter")):
+    # 16. Pitch / Cover note / Summary / Open-ended descriptive questions
+    if any(w in lower_lbl for w in ("cover note", "cover letter", "summary", "why should we hire", "pitch", "brief note", "note to recruiter")) or any(lower_lbl.startswith(w) for w in ("describe", "explain", "detail", "tell us")):
         return (
-            "Full-Stack Software Developer with 3 years of experience in Java, Spring Boot, React.js, Node.js, and REST APIs. "
+            "Full-Stack Software Developer with 3 years of experience in Java, Spring Boot, React.js, Node.js, Python, and RESTful microservices. "
             "Experienced in building scalable web applications and microservices. Immediately available to join."
         )
 
-    # General screening answer fallback
+    # 17. General direct profile answers
     ans = direct_profile_answer(label, profile.answer_library())
     if ans:
         return _clean_numeric_value(ans) if is_numeric else ans
 
+    # 18. General screening answers
     gen_ans = get_screening_answer(label, profile, job_context)
     if gen_ans:
         return _clean_numeric_value(gen_ans) if is_numeric else gen_ans
@@ -368,21 +495,24 @@ def _fill_hirist_text_inputs(page, profile: Profile, job_context: str):
         fields = page.evaluate("""
             () => {
                 const root = document.querySelector('.modal, .modal-dialog, [role="dialog"], .screening-modal, .apply-modal, [class*="modal" i], [class*="popup" i], [class*="drawer" i], form') || document;
-                const elements = Array.from(root.querySelectorAll(
+                const rawElements = Array.from(root.querySelectorAll(
                     'input[type="text"], input[type="number"], input[type="email"], input[type="tel"], input[type="url"], input:not([type]), textarea, div[contenteditable="true"]'
                 ));
                 
-                return elements.map((el, idx) => {
+                // Filter visible elements first so index mapping is strictly 1:1
+                const elements = rawElements.filter(el => {
                     const isVisible = el.offsetParent !== null && window.getComputedStyle(el).display !== 'none';
-                    if (!isVisible || el.disabled || el.readOnly) return null;
-                    
+                    return isVisible && !el.disabled && !el.readOnly;
+                });
+                
+                return elements.map((el, idx) => {
                     const val = (el.value || el.innerText || '').trim();
                     
                     let lbl = '';
-                    // 1. Look for closest Hirist question container
                     const qc = el.closest(
                         '.short-answer-question-container, .multi-answer-question-container, .single-answer-question-container, .screening-question-container, [class*="question-container"], .question, .form-group'
                     );
+                    const containerId = qc ? (qc.id || '') : '';
                     if (qc) {
                         const heading = qc.querySelector('.question-text, .mandatory-question, [class*="question-text"], legend, .label, label');
                         if (heading) {
@@ -390,7 +520,6 @@ def _fill_hirist_text_inputs(page, profile: Profile, job_context: str):
                         }
                     }
                     
-                    // 2. Direct labels
                     if (!lbl && el.labels && el.labels.length > 0) {
                         lbl = (el.labels[0].innerText || '').trim();
                     }
@@ -421,13 +550,15 @@ def _fill_hirist_text_inputs(page, profile: Profile, job_context: str):
                     
                     return {
                         idx,
+                        id: el.id || '',
+                        containerId,
                         type: el.type || 'text',
                         value: val,
                         label: lbl,
                         tag: el.tagName.toLowerCase(),
                         isContentEditable: el.isContentEditable
                     };
-                }).filter(Boolean);
+                });
             }
         """)
         for field in fields:
@@ -435,34 +566,53 @@ def _fill_hirist_text_inputs(page, profile: Profile, job_context: str):
                 continue  # already filled
             
             lbl = field["label"] or "Question"
-            ans = _format_input_answer(lbl, field["type"], profile, job_context)
+            try:
+                ans = _format_input_answer(lbl, field["type"], profile, job_context)
+            except Exception as fe:
+                print(f"    (Error calculating answer for '{lbl[:30]}': {fe})")
+                ans = "0" if field["type"] == "number" else "Yes"
             
-            page.evaluate("""
-                ({idx, val}) => {
-                    const root = document.querySelector('.modal, .modal-dialog, [role="dialog"], .screening-modal, .apply-modal, [class*="modal" i], [class*="popup" i], [class*="drawer" i], form') || document;
-                    const elements = Array.from(root.querySelectorAll(
-                        'input[type="text"], input[type="number"], input[type="email"], input[type="tel"], input[type="url"], input:not([type]), textarea, div[contenteditable="true"]'
-                    )).filter(el => el.offsetParent !== null && !el.disabled && !el.readOnly);
-                    
-                    const el = elements[idx];
-                    if (!el) return;
-                    
-                    el.focus();
-                    if (el.isContentEditable) {
-                        el.innerText = val;
-                        el.dispatchEvent(new InputEvent('input', {bubbles: true, cancelable: true, inputType: 'insertText', data: val}));
-                    } else {
-                        const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-                        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-                        if (setter) setter.call(el, val);
-                        else el.value = val;
-                        el.dispatchEvent(new Event('input', {bubbles: true}));
-                        el.dispatchEvent(new Event('change', {bubbles: true}));
+            try:
+                page.evaluate("""
+                    ({idx, containerId, val}) => {
+                        const root = document.querySelector('.modal, .modal-dialog, [role="dialog"], .screening-modal, .apply-modal, [class*="modal" i], [class*="popup" i], [class*="drawer" i], form') || document;
+                        let el = null;
+                        if (containerId) {
+                            const qc = document.getElementById(containerId);
+                            if (qc) {
+                                el = qc.querySelector('input[type="text"], input[type="number"], input[type="email"], input[type="tel"], input[type="url"], input:not([type]), textarea, div[contenteditable="true"]');
+                            }
+                        }
+                        if (!el) {
+                            const rawElements = Array.from(root.querySelectorAll(
+                                'input[type="text"], input[type="number"], input[type="email"], input[type="tel"], input[type="url"], input:not([type]), textarea, div[contenteditable="true"]'
+                            ));
+                            const elements = rawElements.filter(e => {
+                                const isVisible = e.offsetParent !== null && window.getComputedStyle(e).display !== 'none';
+                                return isVisible && !e.disabled && !e.readOnly;
+                            });
+                            el = elements[idx];
+                        }
+                        if (!el) return;
+                        
+                        el.focus();
+                        if (el.isContentEditable) {
+                            el.innerText = val;
+                            el.dispatchEvent(new InputEvent('input', {bubbles: true, cancelable: true, inputType: 'insertText', data: val}));
+                        } else {
+                            const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+                            const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                            if (setter) setter.call(el, val);
+                            else el.value = val;
+                            el.dispatchEvent(new Event('input', {bubbles: true}));
+                            el.dispatchEvent(new Event('change', {bubbles: true}));
+                        }
+                        el.dispatchEvent(new Event('blur', {bubbles: true}));
                     }
-                    el.dispatchEvent(new Event('blur', {bubbles: true}));
-                }
-            """, {"idx": field["idx"], "val": ans})
-            print(f"    Auto-filled '{lbl[:35]}': {ans}")
+                """, {"idx": field["idx"], "containerId": field.get("containerId", ""), "val": ans})
+                print(f"    Auto-filled '{lbl[:35]}': {ans}")
+            except Exception as e:
+                print(f"    (Note on text field '{lbl[:30]}': {e})")
     except Exception as e:
         print(f"    (Note on text fields: {e})")
 
@@ -645,7 +795,7 @@ def _fill_hirist_radios(page, profile: Profile, job_context: str):
                         const r = radios[idx];
                         if (!r) return;
                         r.scrollIntoView({behavior: 'instant', block: 'center'});
-                        const label = r.closest('label') || document.querySelector(`label[for="${r.id}"]`);
+                        const label = r.closest('label') || (r.id ? document.querySelector(`label[for="${CSS.escape(r.id)}"]`) : null) || (r.parentElement ? r.parentElement.querySelector('label') : null);
                         if (label && label.offsetParent !== null) {
                             label.click();
                         } else {
