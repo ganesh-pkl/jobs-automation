@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # Scheduled Runner for Multi-Portal Jobs Automation
-# Runs automatically via macOS launchd at 8:30 AM, 1:30 PM, and 4:30 PM.
+# Runs automatically via macOS launchd at 9:00 AM, 12:00 PM, and 3:00 PM.
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,12 +40,12 @@ if [ ! -f "$PYTHON_BIN" ]; then
     exit 1
 fi
 
-# Run in visible mode per user preference so browsers bypass anti-bot challenges
-export BROWSER_MODE="visible"
+# Run in hidden (headless) mode sequentially per user preference
+export BROWSER_MODE="headless"
 export PYTHONUNBUFFERED="1"
 
-# Run the full multi-platform daily pipeline
-"$PYTHON_BIN" daily_pipeline.py >> "$LOG_FILE" 2>&1
+# Run the full multi-platform daily pipeline sequentially
+"$PYTHON_BIN" daily_pipeline.py --serial >> "$LOG_FILE" 2>&1
 EXIT_CODE=$?
 
 echo "" >> "$LOG_FILE"

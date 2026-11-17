@@ -261,7 +261,7 @@ def run_outreach(limit: int = 10, dry_run: bool = False):
     search_locations = get_search_locations(profile)
 
     with sync_playwright() as p:
-        launch_kwargs = get_launch_kwargs(headless=False, slow_mo=60)
+        launch_kwargs = get_launch_kwargs(headless=profile.browser_mode == "headless", slow_mo=60)
         browser = p.chromium.launch(**launch_kwargs)
         context_opts = get_context_options(storage_state=SESSION_FILE)
         context = browser.new_context(**context_opts)
@@ -283,11 +283,20 @@ def run_outreach(limit: int = 10, dry_run: bool = False):
 
         if any(marker in page.url.lower() for marker in ("/login", "authwall", "checkpoint", "uas/login", "signup")):
             print("\n[!] LinkedIn session expired or requires login.")
-            print("    Please log in via the browser and press Enter here.")
-            input("Press Enter after logging in: ")
-            context.storage_state(path=SESSION_FILE)
-            Path(SESSION_FILE).chmod(0o600)
-            print("    ✅ Session saved. Continuing...")
+            if sys.stdin.isatty() and profile.browser_mode != "headless":
+                print("    Please log in via the browser and press Enter here.")
+                try:
+                    input("Press Enter after logging in: ")
+                    context.storage_state(path=SESSION_FILE)
+                    Path(SESSION_FILE).chmod(0o600)
+                    print("    ✅ Session saved. Continuing...")
+                except (EOFError, KeyboardInterrupt):
+                    browser.close()
+                    return
+            else:
+                print("    Run 'python login_capture.py linkedin' interactively to refresh session.")
+                browser.close()
+                return
 
         # Stream A: Targeted Job Post Hiring Managers by Category
         for cat_spec in OUTREACH_CATEGORIES:

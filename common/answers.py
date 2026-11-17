@@ -157,14 +157,61 @@ def direct_profile_answer(question: str, answers: dict) -> str | None:
     if any(w in lower_q for w in ("require sponsorship", "need sponsorship", "visa sponsorship", "require visa")):
         return "No"
 
+    # Salary budget / compensation agreement questions (e.g. "Our budget is 60000, are you ready to accept?", "Is CTC range acceptable?")
+    if any(w in lower_q for w in ("budget", "salary range", "ctc offered", "salary offered", "ctc range", "compensation range", "package offered")) and any(w in lower_q for w in ("ready to accept", "comfortable", "okay with", "ok with", "accept the same", "agree", "willing", "acceptable")):
+        return "Yes"
+
+    # Monthly salary questions (e.g. "What is your current monthly take-home salary?", "Gross monthly compensation")
+    if any(w in lower_q for w in ("monthly", "per month", "month salary", "take home", "in hand", "in-hand")):
+        c_lpa = float(answers.get("current_ctc_lpa", 6))
+        e_lpa = float(answers.get("expected_ctc_lpa", 9))
+        if any(w in lower_q for w in ("expected", "desired", "ectc", "expecting")):
+            monthly = int(round((e_lpa * 100000) / 12))
+            return str(monthly)
+        else:
+            monthly = int(round((c_lpa * 100000) / 12))
+            return str(monthly)
+
     # Combined CCTC & ECTC questions (e.g. "What is your CCTC & ECTC?")
     if (
-        any(w in lower_q for w in ("cctc", "current ctc", "present ctc", "current compensation", "current salary"))
+        any(w in lower_q for w in ("cctc", "current ctc", "present ctc", "current compensation", "current salary", "present salary"))
         and any(w in lower_q for w in ("ectc", "expected ctc", "desired ctc", "expected compensation", "expected salary", "expectations", "expectation"))
     ):
         c_ctc = str(answers.get("current_ctc_lpa", "6"))
         e_ctc = str(answers.get("expected_ctc_lpa", "9"))
         return f"Current CTC: {c_ctc} LPA, Expected CTC: {e_ctc} LPA"
+
+    # Current CTC questions
+    if any(w in lower_q for w in ("current ctc", "cctc", "current salary", "present ctc", "present salary", "current compensation", "current annual salary", "current pay", "current package", "fixed ctc", "earning currently", "current earnings")):
+        c_lpa = str(answers.get("current_ctc_lpa", "6"))
+        # Check if question expects pure numbers in LPA / Lakhs: e.g. "in LPA", "in Lacs", "eg 4.5", "eg 45", "numeric"
+        if any(w in lower_q for w in ("in lpa", "in lacs", "in lakhs", "in lac", "in lakh", "eg 4.5", "e.g. 4.5", "eg 4", "e.g. 45", "eg 45", "lpa (", "lacs (", "lakhs (", "in numbers", "numeric", "only digits", "in float", "in decimal", "per annum in lpa")):
+            return c_lpa
+        # Check if question expects INR / Rupees / full amount: e.g. "in INR", "in Rupees", "in Rs", "e.g. 500000"
+        if any(w in lower_q for w in ("in inr", "in rupees", "in rs", "e.g. 500000", "eg 500000", "e.g. 600000", "eg 600000", "in absolute")):
+            try:
+                return str(int(float(c_lpa) * 100000))
+            except Exception:
+                return "600000"
+        return f"{c_lpa} LPA"
+
+    # Variable CTC / Bonus / Incentives
+    if any(w in lower_q for w in ("variable ctc", "variable pay", "bonus", "incentives", "variable component")):
+        return "0"
+
+    # Expected CTC questions
+    if any(w in lower_q for w in ("expected ctc", "ectc", "desired ctc", "expected salary", "desired salary", "expected compensation", "ctc expectation", "salary expectation", "expected annual salary", "expected pay", "expected package", "salary are you expecting", "ctc are you expecting", "annual salary are you expecting", "salary you are expecting", "ctc you are expecting", "expecting annual salary", "salary expecting")):
+        e_lpa = str(answers.get("expected_ctc_lpa", "9"))
+        # Check if question expects pure numbers in LPA / Lakhs: e.g. "in LPA", "in Lacs", "eg 4.5", "eg 45", "numeric"
+        if any(w in lower_q for w in ("in lpa", "in lacs", "in lakhs", "in lac", "in lakh", "eg 4.5", "e.g. 4.5", "eg 4", "e.g. 45", "eg 45", "lpa (", "lacs (", "lakhs (", "in numbers", "numeric", "only digits", "in float", "in decimal", "per annum in lpa")):
+            return e_lpa
+        # Check if question expects INR / Rupees / full amount: e.g. "in INR", "in Rupees", "in Rs", "e.g. 500000"
+        if any(w in lower_q for w in ("in inr", "in rupees", "in rs", "e.g. 500000", "eg 500000", "e.g. 900000", "eg 900000", "in absolute")):
+            try:
+                return str(int(float(e_lpa) * 100000))
+            except Exception:
+                return "900000"
+        return f"{e_lpa} LPA"
 
     # Product-based vs Service-based company questions
     if "product" in lower_q and "service" in lower_q:

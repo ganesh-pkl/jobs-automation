@@ -459,7 +459,15 @@ def handle_apna_screening_modal(page, job_info: dict, profile: Profile, dry_run:
                     ans = get_screening_answer(label, profile, f"{job_info['title']} at {job_info['company']}")
 
                 if ans is not None:
-                    inp.fill(str(ans))
+                    itype = (inp.get_attribute("type") or "").lower()
+                    imode = (inp.get_attribute("inputmode") or "").lower()
+                    is_num = itype == "number" or imode == "numeric" or any(w in label.lower() for w in ("in lpa", "in lacs", "in lakhs", "numeric", "in years", "how many years"))
+                    ans_str = str(ans).strip()
+                    if is_num:
+                        nums = re.findall(r"\d+(?:\.\d+)?", ans_str)
+                        if nums:
+                            ans_str = nums[0]
+                    inp.fill(ans_str)
                     time.sleep(0.3)
         except Exception:
             pass

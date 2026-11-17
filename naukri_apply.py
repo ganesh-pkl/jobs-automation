@@ -853,6 +853,10 @@ def _auto_decide_option(question: str, options: list[dict], profile: Profile) ->
          "Immediate" if find_by_text("Immediate") else ("Immediate (0-15 Days)" if find_by_text("Immediate (0-15 Days)") else ("0-15 Days" if find_by_text("0-15 Days") else ("Yes" if profile.data.get("immediately_available") else "No")))),
         (["currently employed", "currently working"],
          "Yes" if profile.data.get("current_employer") else "No"),
+        (["prefilled from your profile", "prefilled from profile", "prefilled value", "from your profile"],
+         "Yes"),
+        (["budget", "salary range", "compensation range", "package offered", "ready to accept", "acceptable"],
+         "Yes"),
     ]
     for triggers, desired in rules:
         if any(t in lower_q for t in triggers):

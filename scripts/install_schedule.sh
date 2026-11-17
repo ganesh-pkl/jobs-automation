@@ -23,7 +23,7 @@ launchctl load "$TARGET_PLIST"
 
 echo "================================================================================"
 echo "[+] SUCCESS: Jobs Automation schedule is active!"
-echo "[+] Target times: 8:30 AM (before 9 AM), 1:30 PM (before 2 PM), and 4:30 PM (before 5 PM)."
+echo "[+] Target times: 9:00 AM, 12:00 PM, and 3:00 PM."
 echo "[+] Scheduled runner: $PROJECT_DIR/scripts/scheduled_runner.sh"
 echo "[+] Run logs will stream to: $PROJECT_DIR/logs/scheduled_run.log"
 echo "================================================================================"

@@ -154,6 +154,8 @@ class Profile:
                 "Negotiable" if d.get("ctc_disclosure_policy") == "negotiable"
                 else f"{d.get('expected_ctc_lpa', 9)} LPA"
             ),
+            "current_ctc_lpa": str(d.get("current_ctc_lpa", 6)),
+            "expected_ctc_lpa": str(d.get("expected_ctc_lpa", 9)),
             "current_hourly_rate": str(d.get("current_hourly_rate_usd", 15)),
             "expected_hourly_rate": str(d.get("expected_hourly_rate_usd", 25)),
             "current_hourly_rate_usd": str(d.get("current_hourly_rate_usd", 15)),

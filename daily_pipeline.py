@@ -155,6 +155,9 @@ def print_summary_report(today: date, today_str: str):
     print(f"  Applied: {glassdoor_applied_today}\n")
     print(f"Apna:")
     print(f"  Applied: {apna_applied_today}\n")
+    from common.recruiter_connect import count_connections_today
+    connections_sent_today = count_connections_today(today)
+    print(f"LinkedIn Recruiter Connections sent today: {connections_sent_today}\n")
     print(f"Total successful applications today: {total_applied_today}\n")
     print(f"Total successful applications historically: {total_applied_historical}\n")
     print(f"New external/manual jobs added to CSV: {new_external_count}\n")
@@ -210,13 +213,13 @@ def run_parallel():
     print(f"Uplers Safe Threshold (Per Run):                  {uplers_safe_limit}")
     print(f"Instahyre Safe Threshold (Per Run):               {instahyre_safe_limit}")
     print(f"Permanent Application History:                    {len(initial_applied_history)} jobs recorded")
-    print(f"Mode:                                             8 Platforms Running Concurrently (LinkedIn Paused)")
+    print(f"Mode:                                             9 Platforms Running Concurrently")
     print("=" * 65 + "\n")
 
     tasks = [
         ("Hirist", [sys.executable, "hirist_apply.py"]),
         ("Naukri", [sys.executable, "naukri_apply.py"]),
-        # ("LinkedIn", [sys.executable, "linkedin_apply.py"]),  # Paused to protect LinkedIn account
+        ("LinkedIn", [sys.executable, "linkedin_apply.py"]),
         ("Uplers", [sys.executable, "uplers_apply.py"]),
         ("Instahyre", [sys.executable, "instahyre_apply.py"]),
         ("Foundit", [sys.executable, "foundit_apply.py"]),
@@ -246,6 +249,15 @@ def run_parallel():
             except Exception:
                 pass
         sys.exit(130)
+
+    # LinkedIn Recruiter & Hiring Manager Outreach (Runs after application workers)
+    print("\n>>> [Recruiter Outreach] Running LinkedIn Recruiter & Hiring Manager Outreach...")
+    try:
+        import linkedin_recruiter_outreach
+        recruiter_limit = int(profile.data.get("max_connection_requests_per_day", 10))
+        linkedin_recruiter_outreach.run_outreach(limit=recruiter_limit)
+    except Exception as e:
+        print(f"  (Recruiter outreach note: {e})")
 
     print_summary_report(today, today_str)
 
@@ -278,7 +290,7 @@ def run_pipeline():
     print("=" * 65)
     print(f"Target Total Applications (Per Run):              {total_target}")
     print(f"Naukri Safe Threshold (Per Run):                  {naukri_safe_limit}")
-    print(f"LinkedIn Safe Threshold (Per Run):                {linkedin_safe_limit} [PAUSED]")
+    print(f"LinkedIn Safe Threshold (Per Run):                {linkedin_safe_limit}")
     print(f"Foundit Safe Threshold (Per Run):                 {foundit_safe_limit}")
     print(f"Wellfound Safe Threshold (Per Run):               {wellfound_safe_limit}")
     print(f"Glassdoor Safe Threshold (Per Run):               {glassdoor_safe_limit}")
@@ -291,7 +303,7 @@ def run_pipeline():
     print("=" * 65 + "\n")
 
     # 1. Run Hirist
-    print(f">>> [1/8] Running Hirist Automation (Threshold: {hirist_safe_limit})...")
+    print(f">>> [1/10] Running Hirist Automation (Threshold: {hirist_safe_limit})...")
     try:
         import hirist_apply
         hirist_apply.run(limit=hirist_safe_limit)
@@ -299,23 +311,23 @@ def run_pipeline():
         print(f"  (Hirist execution note: {e})")
 
     # 2. Run Naukri
-    print(f"\n>>> [2/8] Running Naukri Automation (Threshold: {naukri_safe_limit})...")
+    print(f"\n>>> [2/10] Running Naukri Automation (Threshold: {naukri_safe_limit})...")
     try:
         import naukri_apply
         naukri_apply.run(limit=naukri_safe_limit)
     except Exception as e:
         print(f"  (Naukri execution note: {e})")
 
-    # 3. LinkedIn (Paused)
-    print(f"\n>>> [3/9] LinkedIn Automation — [PAUSED to protect account]")
-    # try:
-    #     import linkedin_apply
-    #     linkedin_apply.run(limit=linkedin_safe_limit)
-    # except Exception as e:
-    #     print(f"  (LinkedIn execution note: {e})")
+    # 3. Run LinkedIn
+    print(f"\n>>> [3/10] Running LinkedIn Automation (Threshold: {linkedin_safe_limit})...")
+    try:
+        import linkedin_apply
+        linkedin_apply.run(limit=linkedin_safe_limit)
+    except Exception as e:
+        print(f"  (LinkedIn execution note: {e})")
 
     # 4. Run Foundit
-    print(f"\n>>> [4/9] Running Foundit Automation (Threshold: {foundit_safe_limit})...")
+    print(f"\n>>> [4/10] Running Foundit Automation (Threshold: {foundit_safe_limit})...")
     try:
         import foundit_apply
         foundit_apply.run(limit=foundit_safe_limit)
@@ -323,7 +335,7 @@ def run_pipeline():
         print(f"  (Foundit execution note: {e})")
 
     # 5. Run Wellfound (AngelList Talent)
-    print(f"\n>>> [5/9] Running Wellfound Automation (Threshold: {wellfound_safe_limit})...")
+    print(f"\n>>> [5/10] Running Wellfound Automation (Threshold: {wellfound_safe_limit})...")
     try:
         import wellfound_apply
         wellfound_apply.run(limit=wellfound_safe_limit)
@@ -331,7 +343,7 @@ def run_pipeline():
         print(f"  (Wellfound execution note: {e})")
 
     # 6. Run Glassdoor / Indeed SmartApply
-    print(f"\n>>> [6/9] Running Glassdoor Automation (Threshold: {glassdoor_safe_limit})...")
+    print(f"\n>>> [6/10] Running Glassdoor Automation (Threshold: {glassdoor_safe_limit})...")
     try:
         import glassdoor_apply
         glassdoor_apply.run(limit=glassdoor_safe_limit)
@@ -339,7 +351,7 @@ def run_pipeline():
         print(f"  (Glassdoor execution note: {e})")
 
     # 7. Run Apna
-    print(f"\n>>> [7/9] Running Apna Automation (Threshold: {apna_safe_limit})...")
+    print(f"\n>>> [7/10] Running Apna Automation (Threshold: {apna_safe_limit})...")
     try:
         import apna_apply
         apna_apply.run(limit=apna_safe_limit)
@@ -347,7 +359,7 @@ def run_pipeline():
         print(f"  (Apna execution note: {e})")
 
     # 8. Run Uplers
-    print(f"\n>>> [8/9] Running Uplers Automation (Threshold: {uplers_safe_limit})...")
+    print(f"\n>>> [8/10] Running Uplers Automation (Threshold: {uplers_safe_limit})...")
     try:
         import uplers_apply
         uplers_apply.run(limit=uplers_safe_limit)
@@ -355,12 +367,23 @@ def run_pipeline():
         print(f"  (Uplers execution note: {e})")
 
     # 9. Run Instahyre
-    print(f"\n>>> [9/9] Running Instahyre Automation (Threshold: {instahyre_safe_limit})...")
+    print(f"\n>>> [9/10] Running Instahyre Automation (Threshold: {instahyre_safe_limit})...")
     try:
         import instahyre_apply
         instahyre_apply.run(limit=instahyre_safe_limit)
     except Exception as e:
         print(f"  (Instahyre execution note: {e})")
+
+    # 10. Run LinkedIn Recruiter & Hiring Manager Outreach
+    print(f"\n>>> [10/10] Running LinkedIn Recruiter & Hiring Manager Outreach...")
+    try:
+        import linkedin_recruiter_outreach
+        recruiter_limit = int(profile.data.get("max_connection_requests_per_day", 10))
+        linkedin_recruiter_outreach.run_outreach(limit=recruiter_limit)
+    except Exception as e:
+        print(f"  (Recruiter outreach note: {e})")
+
+    print_summary_report(today, today_str)
 
 
 if __name__ == "__main__":

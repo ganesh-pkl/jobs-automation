@@ -553,7 +553,10 @@ def fill_indeed_questions_step(page, profile: Profile, job_title: str) -> bool:
                 # smart fallback
                 lbl_l = label.lower()
                 if "ctc" in lbl_l or "salary" in lbl_l:
-                    ans = f"{profile.expected_ctc_lpa} LPA"
+                    if any(w in lbl_l for w in ("current", "present")):
+                        ans = str(profile.current_ctc_lpa) if itype == "number" else f"{profile.current_ctc_lpa} LPA"
+                    else:
+                        ans = str(profile.expected_ctc_lpa) if itype == "number" else f"{profile.expected_ctc_lpa} LPA"
                 elif "notice" in lbl_l:
                     ans = f"{profile.notice_period_days} days"
                 elif "experience" in lbl_l or "years" in lbl_l:
@@ -564,7 +567,7 @@ def fill_indeed_questions_step(page, profile: Profile, job_title: str) -> bool:
                     ans = "Yes"
 
             # If the input specifically demands a pure numeric value
-            if itype == "number" or "years" in label.lower() or "how many" in label.lower():
+            if itype == "number" or any(w in label.lower() for w in ("years", "how many", "in lpa", "in lacs", "in lakhs", "numeric")):
                 num_match = re.search(r"\b(\d+(?:\.\d+)?)\b", str(ans))
                 if num_match:
                     ans = num_match.group(1)

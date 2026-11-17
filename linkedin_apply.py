@@ -109,10 +109,8 @@ def extract_experience_requirement(text: str) -> int | None:
     return None
 
 
-DEBUG_SCREENSHOTS_DIR = Path("/Users/ganeshpirikirala/.gemini/antigravity/brain/b5f5ae6c-9107-4d5f-ad30-f7cef198b8d0/debug_screenshots")
+DEBUG_SCREENSHOTS_DIR = Path("debug_screenshots")
 DEBUG_SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
-LOCAL_SCREENSHOTS_DIR = Path("debug_screenshots")
-LOCAL_SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def save_debug_screenshot(page, name: str) -> Path | None:
@@ -120,12 +118,10 @@ def save_debug_screenshot(page, name: str) -> Path | None:
         ts = datetime.now().strftime("%H%M%S")
         safe_name = re.sub(r"[^\w\-_\.]", "_", name)
         filename = f"{ts}_{safe_name}.png"
-        artifact_path = DEBUG_SCREENSHOTS_DIR / filename
-        local_path = LOCAL_SCREENSHOTS_DIR / filename
-        page.screenshot(path=str(artifact_path))
+        local_path = DEBUG_SCREENSHOTS_DIR / filename
         page.screenshot(path=str(local_path))
         print(f"  📸 [Screenshot] {filename}")
-        return artifact_path
+        return local_path
     except Exception:
         return None
 
@@ -540,6 +536,11 @@ def fill_text_field(page, field_id: str, text: str) -> bool:
             input_type = (el.get_attribute("type") or "").lower()
             if input_type in ("file", "hidden", "submit", "button", "checkbox", "radio"):
                 return False
+            input_mode = (el.get_attribute("inputmode") or "").lower()
+            if input_type == "number" or input_mode == "numeric":
+                nums = re.findall(r"\d+(?:\.\d+)?", text_str)
+                if nums:
+                    text_str = nums[0]
             max_len_attr = el.get_attribute("maxlength")
             if max_len_attr and max_len_attr.isdigit():
                 max_len = int(max_len_attr)
@@ -684,6 +685,13 @@ def select_dropdown_option(page, field_id: str, label: str, profile: Profile, jo
             preferred_values = ["15", "15-20", "10-15", "15$", "$15"]
         else:
             preferred_values = ["25", "20-25", "25-30", "20$", "25$", "$25"]
+    elif any(w in lbl_lower for w in ("ctc", "salary", "compensation", "lakh", "lpa")):
+        if any(w in lbl_lower for w in ("current", "present", "now")):
+            c_lpa = profile.data.get("current_ctc_lpa", 6)
+            preferred_values = [str(c_lpa), f"{c_lpa} lpa", f"{c_lpa} lakh", f"{c_lpa}00000", "5-7", "5 - 7", "6-8", "6 - 8", "4-6", "4 - 6", "6"]
+        else:
+            e_lpa = profile.data.get("expected_ctc_lpa", 9)
+            preferred_values = [str(e_lpa), f"{e_lpa} lpa", f"{e_lpa} lakh", f"{e_lpa}00000", "8-10", "8 - 10", "8-12", "8 - 12", "7-10", "7 - 10", "9-12", "9 - 12", "9"]
     elif any(w in lbl_lower for w in ("qualification", "degree", "education")):
         preferred_values = ["graduate", "bachelor", "b.tech", "b.e", "b tech", "degree", "undergraduate", "engineering", "diploma", "post graduate", "master"]
     elif any(w in lbl_lower for w in ("current job title", "current title", "designation", "job title", "role", "employment status")):
@@ -1740,6 +1748,12 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
     # Strict pre-apply check on job description for experience requirements
     max_exp_ceiling = profile.seniority_ceiling_years if profile.seniority_ceiling_years is not None else 3
 
+    # Ensure job details pane is loaded
+    try:
+        page.wait_for_selector('#job-details, .jobs-description, .jobs-box__html-content, [class*="job-details"]', timeout=3500)
+    except Exception:
+        pass
+
     # 1. Expand the job description if truncated by clicking "Show more" / "See more"
     try:
         page.evaluate("""() => {
@@ -1754,15 +1768,22 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
         pass
 
     detail_data = page.evaluate("""() => {
-        const titleEl = document.querySelector('.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title, h1');
-        const compEl = document.querySelector('.job-details-jobs-unified-top-card__company-name, .jobs-unified-top-card__company-name, .job-details-jobs-unified-top-card__primary-description a');
+        const titleEl = document.querySelector('.job-details-jobs-unified-top-card__job-title, .jobs-unified-top-card__job-title, h1, .job-details-jobs-unified-top-card__job-title-link, a.job-card-list__title--link');
+        let titleText = titleEl ? titleEl.innerText.trim() : '';
+        if (titleText.includes('\\n')) titleText = titleText.split('\\n')[0].trim();
+
+        const compEl = document.querySelector('.job-details-jobs-unified-top-card__company-name, .jobs-unified-top-card__company-name, a[href*="/company/"], [class*="company-name"], .job-details-jobs-unified-top-card__primary-description a');
+        let compText = compEl ? compEl.innerText.trim() : '';
+        if (compText.includes('\\n')) compText = compText.split('\\n')[0].trim();
+        compText = compText.replace(/\\(Verified job\\)/i, '').trim();
+
         const selectors = [
             '#job-details',
             '.jobs-description__content',
             '.jobs-description',
             '.jobs-box__html-content',
-            '.job-details-jobs-unified-top-card__job-insight',
             'article.jobs-description__container',
+            '.job-details-jobs-unified-top-card__job-insight',
             'div[class*="job-details"]'
         ];
         let text = '';
@@ -1774,8 +1795,8 @@ def run_one_application(page, profile: Profile, job_title: str, company: str) ->
             }
         }
         return {
-            title: titleEl ? titleEl.innerText.trim() : '',
-            company: compEl ? compEl.innerText.trim() : '',
+            title: titleText,
+            company: compText,
             description: text
         };
     }""")
@@ -2616,8 +2637,26 @@ def run(limit: int | None = None):
                         print(f"Skipped: {title} @ {company} (Not in include-only list)")
                         continue
                 
-                # Enforce strict title matching based on profile.yaml unless this is personalized preferences feed
-                if not is_pref:
+                # Enforce title matching: role keywords for specific role searches, or target roles/skills for preferences feed
+                if is_pref:
+                    target_roles_lower = [r.lower() for r in profile.target_roles]
+                    all_keywords = set()
+                    for r in profile.target_roles:
+                        kws = profile.data.get("role_required_keywords", {}).get(r, [])
+                        if not kws:
+                            generic = {"engineer", "developer", "administrator", "analyst", "senior", "junior", "lead", "software"}
+                            kws = [w for w in r.lower().split() if w not in generic]
+                        all_keywords.update(k.lower() for k in kws)
+                    for skill in profile.skills_primary:
+                        all_keywords.add(skill.lower())
+
+                    title_lower = title.lower()
+                    matches_role = any(r in title_lower for r in target_roles_lower)
+                    matches_kw = any(re.search(rf"\b{re.escape(k)}\b", title_lower) for k in all_keywords if len(k) > 2)
+                    if not (matches_role or matches_kw):
+                        print(f"Skipped: {title} @ {card.get('company')} (Preferences feed job does not match target roles or technical keywords)")
+                        continue
+                else:
                     required_keywords = profile.data.get("role_required_keywords", {}).get(role)
                     if not required_keywords:
                         generic = {"engineer", "developer", "administrator", "analyst", "senior", "junior", "lead"}

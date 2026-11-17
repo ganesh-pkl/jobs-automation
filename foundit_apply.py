@@ -290,11 +290,19 @@ def handle_screening_form(page, profile: Profile, job_title: str, company: str, 
                 val = get_screening_answer(label, profile, job_context)
 
             if val is not None:
+                itype = (inp.get_attribute("type") or "").lower()
+                imode = (inp.get_attribute("inputmode") or "").lower()
+                is_num = itype == "number" or imode == "numeric" or any(w in label.lower() for w in ("in lpa", "in lacs", "in lakhs", "numeric", "in years", "how many years"))
+                val_str = str(val).strip()
+                if is_num:
+                    nums = re.findall(r"\d+(?:\.\d+)?", val_str)
+                    if nums:
+                        val_str = nums[0]
                 try:
                     inp.scroll_into_view_if_needed()
-                    inp.fill(str(val))
+                    inp.fill(val_str)
                     time.sleep(0.3)
-                    print(f"    Auto-filled '{label[:30]}': {str(val)[:30]}")
+                    print(f"    Auto-filled '{label[:30]}': {val_str[:30]}")
                 except Exception as e:
                     print(f"    Warning: Could not fill '{label}': {e}")
 
