@@ -96,41 +96,40 @@ function getTodayStats() {
     }
   }
 
-  // Check session freshness
-  const sessionNaukriPath = path.join(PROJECT_DIR, 'session_naukri.json');
-  let naukriFresh = false;
-  if (fs.existsSync(sessionNaukriPath)) {
-    const mtime = fs.statSync(sessionNaukriPath).mtime;
-    // If refreshed in the last 2 hours
-    if ((Date.now() - mtime.getTime()) < (2 * 3600 * 1000)) {
-      naukriFresh = true;
-    }
-  }
-
-  // Check log for common session/challenge notices
+  // Check log for common session/challenge notices in the current run cycle only
   if (fs.existsSync(LOG_PATH)) {
-    const logContent = fs.readFileSync(LOG_PATH, 'utf-8');
-    if (!naukriFresh && logContent.includes('access denied') && !stats.alerts.some(a => a.portal === 'Naukri')) {
-      stats.alerts.push({
-        portal: 'Naukri',
-        level: 'warning',
-        message: 'Session expired. Run `python login_capture.py naukri` to refresh cookies.'
-      });
-    } else if (naukriFresh) {
-      stats.alerts.push({
-        portal: 'Naukri',
-        level: 'success',
-        message: 'Session refreshed successfully! Ready for the next application cycle.'
-      });
+    const fullLog = fs.readFileSync(LOG_PATH, 'utf-8');
+    const lastRunIdx = fullLog.lastIndexOf('STARTING SEQUENTIAL JOB APPLICATION PIPELINE');
+    const logContent = lastRunIdx !== -1 ? fullLog.slice(lastRunIdx) : fullLog.slice(-50000);
+
+    // Naukri alert
+    if (stats.byPlatform.naukri.applied === 0) {
+      if (logContent.includes('session expired / login prompt') || stats.byPlatform.naukri.reason.includes('login')) {
+        stats.alerts.push({
+          portal: 'Naukri',
+          level: 'warning',
+          message: 'Session expired. Run `python login_capture.py naukri` to refresh cookies.'
+        });
+      } else if (logContent.includes('access denied') || stats.byPlatform.naukri.reason.includes('access denied')) {
+        stats.alerts.push({
+          portal: 'Naukri',
+          level: 'warning',
+          message: 'WAF/Bot check challenge detected on search. Safely paused for this cycle.'
+        });
+      }
     }
-    if (logContent.includes('verification challenge detected on Foundit') && !stats.alerts.some(a => a.portal === 'Foundit')) {
+
+    // Foundit alert
+    if (stats.byPlatform.foundit.applied === 0 && logContent.includes('verification challenge detected on Foundit') && !stats.alerts.some(a => a.portal === 'Foundit')) {
       stats.alerts.push({
         portal: 'Foundit',
         level: 'info',
         message: 'Security challenge detected on search. Safely paused for this cycle.'
       });
     }
-    if (logContent.includes('Bot check detected on Glassdoor') && !stats.alerts.some(a => a.portal === 'Glassdoor')) {
+
+    // Glassdoor alert
+    if (stats.byPlatform.glassdoor.applied === 0 && logContent.includes('Bot check detected on Glassdoor') && !stats.alerts.some(a => a.portal === 'Glassdoor')) {
       stats.alerts.push({
         portal: 'Glassdoor',
         level: 'info',

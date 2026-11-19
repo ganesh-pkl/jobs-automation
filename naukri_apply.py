@@ -25,7 +25,7 @@ from common import learned_answers
 from common.human_input import ask_user
 from common import stats_tracker
 from common.answers import direct_profile_answer, get_screening_answer
-from common.stealth import get_context_options, apply_stealth
+from common.stealth import get_launch_kwargs, get_context_options, apply_stealth
 
 SESSION_FILE = "session_naukri.json"
 LOG_FILE = "applications_log.csv"
@@ -1455,13 +1455,11 @@ def run(preview: bool = False, limit: int | None = None):
     attempted = 0
     applied_job_keys = load_applied_job_keys()
     with sync_playwright() as p:
-        browser_mode = profile.data.get("browser_mode", "visible")
-        if browser_mode == "headless":
-            browser = p.chromium.launch(headless=True, slow_mo=150)
-        elif browser_mode == "minimized":
-            browser = p.chromium.launch(headless=False, slow_mo=150, args=["--start-minimized"])
-        else:
-            browser = p.chromium.launch(headless=False, slow_mo=150)
+        is_headless = profile.browser_mode == "headless"
+        launch_kwargs = get_launch_kwargs(headless=is_headless, slow_mo=150)
+        if profile.browser_mode == "minimized":
+            launch_kwargs.setdefault("args", []).append("--start-minimized")
+        browser = p.chromium.launch(**launch_kwargs)
         context = browser.new_context(**get_context_options(storage_state=SESSION_FILE))
         apply_stealth(context)
         page = context.new_page()

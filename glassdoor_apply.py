@@ -34,6 +34,7 @@ from common.answers import get_screening_answer
 from common.external_tracker import log_external_job
 from common import stats_tracker
 from common import llm
+from common.stealth import get_launch_kwargs, get_context_options, apply_stealth
 
 SESSION_FILE = "session_glassdoor.json"
 LOG_FILE = "applications_log.csv"
@@ -722,15 +723,12 @@ def run(limit: int | None = None, specific_role: str | None = None, dry_run: boo
     attempt_count = 0
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=profile.browser_mode == "headless",
-            args=["--disable-blink-features=AutomationControlled"]
-        )
-        context = browser.new_context(
-            storage_state=SESSION_FILE,
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 850}
-        )
+        launch_kwargs = get_launch_kwargs(headless=profile.browser_mode == "headless", slow_mo=80)
+        browser = p.chromium.launch(**launch_kwargs)
+        storage_path = SESSION_FILE if Path(SESSION_FILE).exists() else None
+        context_opts = get_context_options(storage_state=storage_path)
+        context = browser.new_context(**context_opts)
+        apply_stealth(context)
         page = context.new_page()
 
         for role in roles:

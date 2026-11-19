@@ -35,6 +35,7 @@ from common.answers import get_screening_answer, is_sensitive_field
 from common.external_tracker import log_external_job
 from common.human_input import ask_user
 from common import stats_tracker
+from common.stealth import get_launch_kwargs, get_context_options, apply_stealth
 
 SESSION_FILE = "session_foundit.json"
 LOG_FILE = "applications_log.csv"
@@ -450,24 +451,14 @@ def run(role: str | None = None, limit: int | None = None, dry_run: bool = False
     loc_query = ",".join(loc_tokens) if loc_tokens else ""
 
     with sync_playwright() as p:
-        # Launch Chromium with anti-detection flags
-        # Headless mode can be blocked by Akamai, so we launch visible unless headless explicitly works
         headless_mode = profile.browser_mode == "headless"
-        browser = p.chromium.launch(
-            headless=headless_mode,
-            args=["--disable-blink-features=AutomationControlled"]
-        )
+        launch_kwargs = get_launch_kwargs(headless=headless_mode, slow_mo=80)
+        browser = p.chromium.launch(**launch_kwargs)
 
-        context_kwargs = {
-            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            "viewport": {"width": 1280, "height": 800},
-            "locale": "en-US",
-            "timezone_id": "Asia/Kolkata",
-        }
-        if Path(SESSION_FILE).exists():
-            context_kwargs["storage_state"] = SESSION_FILE
-
-        context = browser.new_context(**context_kwargs)
+        storage_path = SESSION_FILE if Path(SESSION_FILE).exists() else None
+        context_opts = get_context_options(storage_state=storage_path)
+        context = browser.new_context(**context_opts)
+        apply_stealth(context)
         page = context.new_page()
 
         for cur_role in roles_to_search:
