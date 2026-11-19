@@ -44,6 +44,10 @@ fi
 export BROWSER_MODE="headless"
 export PYTHONUNBUFFERED="1"
 
+# Algorithmic Profile Activity Refresh: Updates Naukri & LinkedIn on 1st run (9 AM) and 3rd run (3 PM)
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checking profile activity refresh for Naukri & LinkedIn..." >> "$LOG_FILE"
+"$PYTHON_BIN" profile_activity_refresher.py >> "$LOG_FILE" 2>&1 || true
+
 # Run the full multi-platform daily pipeline sequentially
 "$PYTHON_BIN" daily_pipeline.py --serial >> "$LOG_FILE" 2>&1
 EXIT_CODE=$?

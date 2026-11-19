@@ -302,6 +302,13 @@ def run_pipeline():
     print(f"Today's External Jobs CSV:                        Reset to 0 rows (active working queue)")
     print("=" * 65 + "\n")
 
+    # Algorithmic Profile Activity Refresh (Naukri & LinkedIn on 1st run @ 9 AM and 3rd run @ 3 PM)
+    try:
+        import profile_activity_refresher
+        profile_activity_refresher.run_refresh_cycle()
+    except Exception as e:
+        print(f"  (Profile activity refresh note: {e})")
+
     # 1. Run Hirist
     print(f">>> [1/10] Running Hirist Automation (Threshold: {hirist_safe_limit})...")
     try:
