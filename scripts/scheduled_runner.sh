@@ -23,7 +23,15 @@ fi
 
 # Acquire process lock
 echo $$ > "$LOCK_FILE"
-trap 'rm -f "$LOCK_FILE"' EXIT INT TERM
+
+# Keep Mac awake (prevent idle sleep, display sleep, and system sleep) while this pipeline runs
+if command -v caffeinate >/dev/null 2>&1; then
+    caffeinate -disu -w $$ &
+    CAFFEINATE_PID=$!
+    trap 'kill -9 "$CAFFEINATE_PID" 2>/dev/null; rm -f "$LOCK_FILE"' EXIT INT TERM
+else
+    trap 'rm -f "$LOCK_FILE"' EXIT INT TERM
+fi
 
 echo "" >> "$LOG_FILE"
 echo "================================================================================" >> "$LOG_FILE"

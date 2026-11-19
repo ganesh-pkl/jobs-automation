@@ -13,6 +13,8 @@ Usage:
     python daily_pipeline.py
 """
 import csv
+import os
+import subprocess
 import sys
 import time
 from datetime import datetime, date
@@ -394,6 +396,13 @@ def run_pipeline():
 
 
 if __name__ == "__main__":
+    if sys.platform == "darwin":
+        try:
+            # Prevent macOS from sleeping while the application pipeline runs
+            subprocess.Popen(["caffeinate", "-disu", "-w", str(os.getpid())])
+        except Exception:
+            pass
+
     import argparse
     parser = argparse.ArgumentParser(description="Multi-portal Job Application Pipeline")
     parser.add_argument("--serial", action="store_true", help="Run sequentially one portal at a time")
