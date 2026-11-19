@@ -179,6 +179,15 @@ def print_summary_report(today: date, today_str: str):
                 print(f"   Skills: {skills}")
             print(f"   Careers Link: {ext_url}\n")
 
+    # Send automated email status report via Resend
+    email_script = Path(__file__).resolve().parent / "scripts" / "send_status_email.js"
+    if email_script.exists():
+        try:
+            print("\n[+] Triggering automated status report email via Resend...")
+            subprocess.run(["node", str(email_script)], check=False)
+        except Exception as e:
+            print(f"  (Status email notice: {e})")
+
 
 def run_parallel():
     import subprocess
