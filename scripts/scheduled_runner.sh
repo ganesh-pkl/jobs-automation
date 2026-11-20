@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # Scheduled Runner for Multi-Portal Jobs Automation
-# Runs automatically via macOS launchd at 9:00 AM, 12:00 PM, and 3:00 PM.
+# Runs automatically via macOS launchd at 8:30 AM, 11:30 AM, and 2:30 PM.
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,11 +48,17 @@ if [ ! -f "$PYTHON_BIN" ]; then
     exit 1
 fi
 
+# Send pipeline start notification email via Resend
+if [ -f "$PROJECT_DIR/scripts/send_status_email.js" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Sending pipeline start notification email via Resend..." >> "$LOG_FILE"
+    node "$PROJECT_DIR/scripts/send_status_email.js" --started >> "$LOG_FILE" 2>&1 || true
+fi
+
 # Run in hidden (headless) mode sequentially per user preference
 export BROWSER_MODE="headless"
 export PYTHONUNBUFFERED="1"
 
-# Algorithmic Profile Activity Refresh: Updates Naukri & LinkedIn on 1st run (9 AM) and 3rd run (3 PM)
+# Algorithmic Profile Activity Refresh: Updates Naukri & LinkedIn on 1st run (8:30 AM) and 3rd run (2:30 PM)
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checking profile activity refresh for Naukri & LinkedIn..." >> "$LOG_FILE"
 "$PYTHON_BIN" profile_activity_refresher.py >> "$LOG_FILE" 2>&1 || true
 

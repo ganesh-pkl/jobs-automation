@@ -1,7 +1,7 @@
 """
 Profile Activity Refresher for Naukri & LinkedIn.
 Performs minor algorithmic activity updates (e.g. refreshing headline / summary)
-at scheduled cycles (1st run @ 9 AM and 3rd run @ 3 PM) to trigger platform
+at scheduled cycles (1st run @ 8:30 AM and 3rd run @ 2:30 PM) to trigger platform
 recommendation algorithms and keep your profile at the top of recruiter searches.
 """
 import argparse

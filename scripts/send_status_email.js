@@ -326,7 +326,7 @@ function generateHtmlReport(stats, externalJobs) {
 
           <!-- Footer -->
           <div style="margin-top: 24px; padding-top: 14px; border-top: 1px solid #e2e8f0; text-align: center; color: #94a3b8; font-size: 11px; line-height: 1.4;">
-            Autonomous Jobs Pipeline on macOS • Runs daily at <strong>8:30 AM</strong>, <strong>1:30 PM</strong>, <strong>4:30 PM</strong>.<br>
+            Autonomous Jobs Pipeline on macOS • Runs daily at <strong>8:30 AM</strong>, <strong>11:30 AM</strong>, <strong>2:30 PM</strong>.<br>
             All applied jobs are recorded permanently in <code>applications_log.csv</code>.
           </div>
 
@@ -338,8 +338,137 @@ function generateHtmlReport(stats, externalJobs) {
   `;
 }
 
+function generatePipelineStartedHtml(cycleName, nowStr) {
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline Started: ${cycleName}</title>
+    <style>
+      body { margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+      .container { max-width: 600px; margin: 20px auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); }
+      .header { background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); padding: 24px 20px; color: #ffffff; text-align: center; }
+      .badge { display: inline-block; padding: 4px 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; border-radius: 9999px; background: rgba(255, 255, 255, 0.2); color: #ffffff; margin-bottom: 8px; }
+      .title { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
+      .subtitle { margin: 6px 0 0; font-size: 13px; color: #e0f2fe; }
+      .body { padding: 24px 20px; color: #334155; }
+      .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+      .pill { display: inline-block; padding: 4px 8px; font-size: 11px; font-weight: 600; border-radius: 4px; background: #e0f2fe; color: #0369a1; margin: 3px 2px; }
+      .footer { margin-top: 24px; padding-top: 14px; border-top: 1px solid #e2e8f0; text-align: center; color: #94a3b8; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <div style="padding: 10px;">
+      <div class="container">
+        <div class="header">
+          <div class="badge">🚀 Execution Active</div>
+          <h1 class="title">Jobs Automation Pipeline Started</h1>
+          <div class="subtitle">${cycleName} • ${nowStr}</div>
+        </div>
+        <div class="body">
+          <div class="card" style="border-left: 4px solid #0284c7;">
+            <div style="font-size: 13px; font-weight: 700; color: #0369a1; margin-bottom: 4px;">🎯 30-Minute Early Outreach Advantage</div>
+            <div style="font-size: 13px; color: #475569; line-height: 1.5;">
+              Running ahead of peak business hours (8:30 AM / 11:30 AM / 2:30 PM) so your tailored profile and resume land at the <strong>very top of recruiter inboxes</strong> before hiring teams open their laptops at 9:30–10:00 AM.
+            </div>
+          </div>
+
+          <h3 style="margin: 18px 0 8px; color: #0f172a; font-size: 14px; font-weight: 600;">⚡ Active Pipeline Tasks in This Cycle</h3>
+          <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #475569; line-height: 1.6;">
+            <li><strong>Profile Activity Refresh:</strong> Minor headline updates on Naukri & LinkedIn to trigger platform activity algorithms and boost recruiter search appearances.</li>
+            <li><strong>Dynamic ATS Resume Compilation:</strong> JD-tailored 1-page PDF resumes built on the fly for LinkedIn EasyApply postings.</li>
+            <li><strong>Stealth Multi-Portal Applications:</strong> Running across 9 portals in headless mode with automated form screening and CTC handling.</li>
+            <li><strong>Scam Protection:</strong> Filtering spam/reposting agencies like Jobgether/Jobtogether.</li>
+          </ul>
+
+          <h3 style="margin: 18px 0 8px; color: #0f172a; font-size: 14px; font-weight: 600;">🌐 Portals Being Processed</h3>
+          <div style="margin-bottom: 16px;">
+            <span class="pill">LinkedIn EasyApply</span>
+            <span class="pill">LinkedIn Recruiter Outreach</span>
+            <span class="pill">Naukri</span>
+            <span class="pill">Foundit (Monster)</span>
+            <span class="pill">Glassdoor (Indeed SmartApply)</span>
+            <span class="pill">Instahyre</span>
+            <span class="pill">Hirist</span>
+            <span class="pill">Wellfound</span>
+            <span class="pill">Uplers</span>
+            <span class="pill">Apna</span>
+          </div>
+
+          <div class="card" style="background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-size: 12px; line-height: 1.5;">
+            <strong>📬 What happens next:</strong> As soon as this application sweep finishes, a detailed completion summary email with exact counts and job links will be delivered to you automatically.
+          </div>
+
+          <div class="footer">
+            Autonomous Jobs Pipeline on macOS • Operating in 24/7 Server Mode<br>
+            Cycles: <strong>8:30 AM</strong> • <strong>11:30 AM</strong> • <strong>2:30 PM</strong>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+  </html>
+  `;
+}
+
 // 5. Send Email via Resend API
 async function main() {
+  const isStarted = process.argv.includes('--started');
+
+  if (isStarted) {
+    const now = new Date();
+    const hour = now.getHours();
+    let cycleName = 'Early Outreach Cycle';
+    if (hour < 11) {
+      cycleName = 'Morning Run (8:30 AM)';
+    } else if (hour < 14) {
+      cycleName = 'Mid-Day Run (11:30 AM)';
+    } else {
+      cycleName = 'Afternoon Run (2:30 PM)';
+    }
+    const nowStr = now.toLocaleDateString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+
+    const htmlContent = generatePipelineStartedHtml(cycleName, nowStr);
+    console.log(`[+] Sending pipeline start notification email to ${TO_EMAIL}...`);
+
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from: 'Jobs Automation <onboarding@resend.dev>',
+          to: [TO_EMAIL],
+          subject: `🚀 [Started] Jobs Automation Pipeline Active — ${cycleName}`,
+          html: htmlContent
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        console.log(`[+] SUCCESS: Start notification email sent to ${TO_EMAIL}! Message ID: ${data.id}`);
+      } else {
+        console.error(`[!] Failed to send start email via Resend:`, data);
+      }
+    } catch (err) {
+      console.error(`[!] Network error sending start email:`, err.message);
+    }
+    return;
+  }
+
   const stats = getTodayStats();
   const externalJobs = getExternalJobs();
   const htmlContent = generateHtmlReport(stats, externalJobs);

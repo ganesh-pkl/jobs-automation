@@ -33,11 +33,11 @@ class ProfileActivityRefresherTests(unittest.TestCase):
 
     @patch("profile_activity_refresher.refresh_naukri_activity")
     @patch("profile_activity_refresher.refresh_linkedin_activity")
-    def test_run_refresh_cycle_executes_at_9am_and_3pm(self, mock_li, mock_naukri):
-        # 9 AM (1st run)
-        fake_time_9am = datetime(2026, 11, 19, 9, 0, 0)
+    def test_run_refresh_cycle_executes_at_8_30am_and_2_30pm(self, mock_li, mock_naukri):
+        # 8:30 AM (1st run)
+        fake_time_830am = datetime(2026, 11, 20, 8, 30, 0)
         with patch("profile_activity_refresher.datetime") as mock_dt:
-            mock_dt.now.return_value = fake_time_9am
+            mock_dt.now.return_value = fake_time_830am
             run_refresh_cycle(force=False)
             self.assertEqual(mock_naukri.call_count, 1)
             self.assertEqual(mock_li.call_count, 1)
@@ -45,10 +45,10 @@ class ProfileActivityRefresherTests(unittest.TestCase):
         mock_naukri.reset_mock()
         mock_li.reset_mock()
 
-        # 3 PM (3rd run)
-        fake_time_3pm = datetime(2026, 11, 19, 15, 0, 0)
+        # 2:30 PM (3rd run)
+        fake_time_230pm = datetime(2026, 11, 20, 14, 30, 0)
         with patch("profile_activity_refresher.datetime") as mock_dt:
-            mock_dt.now.return_value = fake_time_3pm
+            mock_dt.now.return_value = fake_time_230pm
             run_refresh_cycle(force=False)
             self.assertEqual(mock_naukri.call_count, 1)
             self.assertEqual(mock_li.call_count, 1)

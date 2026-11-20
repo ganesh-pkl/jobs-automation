@@ -189,8 +189,30 @@ def print_summary_report(today: date, today_str: str):
             print(f"  (Status email notice: {e})")
 
 
+def notify_pipeline_started():
+    """Sends a start notification email via Resend if not already notified in last 5 min."""
+    flag_file = Path("/tmp/jobs_pipeline_start_notified.txt")
+    if flag_file.exists():
+        try:
+            mtime = flag_file.stat().st_mtime
+            if time.time() - mtime < 300:
+                return
+        except Exception:
+            pass
+
+    email_script = Path(__file__).resolve().parent / "scripts" / "send_status_email.js"
+    if email_script.exists():
+        try:
+            print("\n[+] Sending pipeline start notification email via Resend...")
+            subprocess.run(["node", str(email_script), "--started"], check=False)
+            flag_file.write_text(str(time.time()), encoding="utf-8")
+        except Exception as e:
+            print(f"  (Start email notice: {e})")
+
+
 def run_parallel():
     import subprocess
+    notify_pipeline_started()
     today = datetime.now().date()
     today_str = today.strftime("%Y-%m-%d")
     stats_tracker.reset_stats()
@@ -274,6 +296,7 @@ def run_parallel():
 
 
 def run_pipeline():
+    notify_pipeline_started()
     today = datetime.now().date()
     today_str = today.strftime("%Y-%m-%d")
     stats_tracker.reset_stats()
